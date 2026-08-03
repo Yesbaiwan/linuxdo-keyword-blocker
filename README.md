@@ -4,9 +4,9 @@ Linux.do 关键词屏蔽脚本。按关键词自动隐藏/淡化不想看的帖�
 
 ## 安装
 
-1. 安装用户脚本管理器（推荐 [Tampermonkey](https://www.tampermonkey.net/)）
-2. 点击安装：[ld-blocker.user.js](ld-blocker.user.js)
-3. 或手动复制 `ld-blocker.user.js` 内容到 Tampermonkey 新建脚本
+**方式一**：点击直装 → [Linux.do Keyword Blocker](https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js)
+
+**方式二**：手动复制 [ld-blocker.user.js](ld-blocker.user.js) 内容到 Tampermonkey 新建脚本
 
 ## 使用
 
@@ -19,17 +19,15 @@ Linux.do 关键词屏蔽脚本。按关键词自动隐藏/淡化不想看的帖�
 
 ### 面板功能
 
-| 按钮 | 说明 |
-| ---- | ---- |
-| 启用屏蔽 | 总开关 |
-| 添加 | 添加输入框里的关键词 |
-| 处理 | 切换隐藏/淡化模式 |
-| 导出 | 下载关键词列表 |
-| 还原位置 | 按钮重置到右上角 |
-| 清空 | 清除所有关键词 |
-| × | 删除单个关键词 |
-
-- 按钮可拖拽移动，位置自动保存
+| 按钮     | 说明                 |
+| -------- | -------------------- |
+| 启用屏蔽 | 总开关               |
+| 添加     | 添加输入框里的关键词 |
+| 处理     | 切换隐藏/淡化模式    |
+| 导出     | 下载关键词列表       |
+| 还原位置 | 按钮重置到右上角     |
+| 清空     | 清除所有关键词       |
+| ×        | 删除单个关键词       |
 
 ## 许可
 

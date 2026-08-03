@@ -5,10 +5,13 @@
 // @description  用关键词屏蔽 linux.do 上不想看到的帖子
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
+// @homepageURL  https://github.com/Yesbaiwan/linuxdo-keyword-blocker
+// @updateURL    https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.registerMenuCommand
 // @run-at       document-idle
+// @license      MIT
 // ==/UserScript==
 
 (function () {
