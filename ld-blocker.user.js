@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      1.1
+// @version      1.2
 // @description  用关键词屏蔽 linux.do 上不想看到的帖子
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
