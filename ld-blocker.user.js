@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      1.2
+// @version      1.3
 // @description  用关键词屏蔽 linux.do 上不想看到的帖子
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -28,7 +28,6 @@
 
   let settings = { ...DEFAULT_SETTINGS };
   let observer = null;
-  let scanTimer = null;
   let panelOpen = false;
 
   const TOPIC_SELECTORS = [
@@ -61,11 +60,13 @@
       ...parsed,
       keywords: normalizeKeywords(parsed.keywords),
     };
+    refreshKeywordCache();
   }
 
   async function saveSettings(patch) {
     settings = { ...settings, ...patch };
     settings.keywords = normalizeKeywords(settings.keywords);
+    refreshKeywordCache();
     await GM.setValue(STORAGE_KEY, JSON.stringify(settings));
     renderPanel();
     scanTopics();
@@ -80,6 +81,19 @@
   function normalizeKeywords(keywords) {
     return [...new Set((keywords || []).map((k) => k.trim()).filter(Boolean))];
   }
+
+  // 关键词小写形式缓存，仅在设置变更时重算
+  let kwVersion = 0;
+  let kwLower = [];
+
+  function refreshKeywordCache() {
+    kwLower = settings.keywords.map((k) => k.toLocaleLowerCase());
+    kwVersion++;
+  }
+
+  // 匹配结果缓存：话题 id（或无 id 时的节点）→ 命中的关键词，设置变更后整批失效
+  const matchCache = new Map();
+  const nodeMatchCache = new WeakMap();
 
   function getTopicText(topic) {
     const title = topic.querySelector(TITLE_SELECTORS)?.textContent || '';
@@ -96,45 +110,64 @@
     );
   }
 
-  function keywordMatches(text, keyword) {
-    return text.includes(normalizeText(keyword));
+  function findMatchedKeyword(topic, force) {
+    if (kwLower.length === 0) return null;
+    const id = topic.dataset.topicId;
+    let entry = id ? matchCache.get(id) : nodeMatchCache.get(topic);
+    if (!force && entry && entry.v === kwVersion) return entry.kw;
+
+    const text = normalizeText(getTopicText(topic));
+    let kw = null;
+    for (let i = 0; i < kwLower.length; i++) {
+      if (text.includes(kwLower[i])) {
+        kw = settings.keywords[i];
+        break;
+      }
+    }
+    entry = { v: kwVersion, kw };
+    if (id) matchCache.set(id, entry);
+    else nodeMatchCache.set(topic, entry);
+    return kw;
   }
 
-  function findMatchedKeyword(topic) {
-    const topicText = getTopicText(topic);
-    return settings.keywords.find((keyword) =>
-      keywordMatches(topicText, keyword),
-    );
+  // 状态存 data 属性而非 class：Discourse(Ember) 异步补数据时会重写行的 class，
+  // 注入的类会被抹掉导致帖子"闪回来"，data 属性则不受影响
+  function applyTopicState(topic, matched) {
+    const active = settings.enabled;
+    const wantHidden = active && matched && settings.hideMode === 'hide';
+    const wantDimmed = active && matched && settings.hideMode === 'dim';
+    const state = wantHidden ? 'hidden' : wantDimmed ? 'dimmed' : null;
+    if ((topic.dataset.lkcbState || null) === state) return;
+
+    if (state) topic.dataset.lkcbState = state;
+    else delete topic.dataset.lkcbState;
+    if (matched && active) topic.dataset.lkcbMatch = matched;
+    else topic.removeAttribute('data-lkcb-match');
   }
 
+  // 嵌套命中的内层元素不应携带状态（插入竞态可能把状态打在内层上），清理残留
+  function clearNestedState(topic) {
+    topic
+      .querySelectorAll?.('[data-lkcb-state],[data-lkcb-match]')
+      .forEach((el) => {
+        el.removeAttribute('data-lkcb-state');
+        el.removeAttribute('data-lkcb-match');
+      });
+  }
+
+  // 全量扫描：仅在初始化和设置变更时执行
   function scanTopics() {
-    const active = settings.enabled && settings.keywords.length > 0;
     document.querySelectorAll(TOPIC_SELECTORS).forEach((topic) => {
-      const matched = active ? findMatchedKeyword(topic) : null;
-      const wantHidden = matched && settings.hideMode === 'hide';
-      const wantDimmed = matched && settings.hideMode === 'dim';
-
-      // 状态已经正确就跳过
-      if (wantHidden && topic.classList.contains('lkcb-hidden')) return;
-      if (wantDimmed && topic.classList.contains('lkcb-dimmed')) return;
-      if (
-        !matched &&
-        !topic.classList.contains('lkcb-hidden') &&
-        !topic.classList.contains('lkcb-dimmed')
-      )
+      // 嵌套命中的内层元素不参与匹配，但要清理可能残留的状态
+      if (topic.parentElement?.closest(TOPIC_SELECTORS)) {
+        if (topic.dataset.lkcbState || topic.dataset.lkcbMatch) {
+          delete topic.dataset.lkcbState;
+          topic.removeAttribute('data-lkcb-match');
+        }
         return;
-
-      topic.classList.remove('lkcb-hidden', 'lkcb-dimmed');
-      if (wantHidden) topic.classList.add('lkcb-hidden');
-      if (wantDimmed) topic.classList.add('lkcb-dimmed');
-      if (matched) topic.dataset.lkcbMatch = matched;
-      else topic.removeAttribute('data-lkcb-match');
+      }
+      applyTopicState(topic, findMatchedKeyword(topic));
     });
-  }
-
-  function scheduleScan() {
-    window.clearTimeout(scanTimer);
-    scanTimer = window.setTimeout(scanTopics, 300);
   }
 
   // ===== styles =====
@@ -144,9 +177,9 @@
     const style = document.createElement('style');
     style.id = 'lkcb-style';
     // prettier-ignore
-    style.textContent = `.lkcb-hidden { display: none !important; }
-.lkcb-dimmed { opacity: 0.2 !important; }
-.lkcb-dimmed:hover { opacity: 0.8 !important; }
+    style.textContent = `[data-lkcb-state="hidden"] { display: none !important; }
+[data-lkcb-state="dimmed"] { opacity: 0.2 !important; }
+[data-lkcb-state="dimmed"]:hover { opacity: 0.8 !important; }
 #lkcb-trigger { position: fixed; top: 10px; right: 20px; left: auto; bottom: auto; z-index: 99999; padding: 8px 12px; border: 1px solid #414350; border-radius: 4px; background: #373a47; color: #f2f2f2; cursor: move; font-family: system-ui, sans-serif; font-size: 14px; user-select: none; }
 #lkcb-trigger:hover { background: #4a4e5e; }
 #lkcb-trigger.dragging { cursor: grabbing; }
@@ -501,16 +534,75 @@
 
   function startObserver() {
     if (observer) observer.disconnect();
-    observer = new MutationObserver(() => {
+    observer = new MutationObserver((mutations) => {
       if (!settings.triggerPosition) positionTriggerDefault();
-      scheduleScan();
+      handleAddedNodes(mutations);
     });
     observer.observe(document.body, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ['class'],
     });
+  }
+
+  // 新增行在浏览器绘制前同步处理，避免"先显示后隐藏"的闪现与跳动
+  function handleAddedNodes(mutations) {
+    const active = settings.enabled && settings.keywords.length > 0;
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (typeof node.id === 'string' && node.id.startsWith('lkcb-'))
+          continue;
+        if (!active) {
+          // 屏蔽关闭时，清掉 Ember 回收复用节点上可能残留的旧状态
+          node.removeAttribute('data-lkcb-state');
+          node.removeAttribute('data-lkcb-match');
+          node
+            .querySelectorAll?.('[data-lkcb-state],[data-lkcb-match]')
+            .forEach((el) => {
+              el.removeAttribute('data-lkcb-state');
+              el.removeAttribute('data-lkcb-match');
+            });
+          continue;
+        }
+        if (node.matches(TOPIC_SELECTORS)) {
+          // 未挂载的节点父链不完整，可能被误判为最外层行；等挂载时随子树统一处理
+          if (
+            node.isConnected &&
+            !node.parentElement?.closest(TOPIC_SELECTORS)
+          ) {
+            applyTopicState(node, findMatchedKeyword(node));
+            clearNestedState(node);
+          }
+          continue;
+        }
+        const descendants = node.querySelectorAll(TOPIC_SELECTORS);
+        if (descendants.length === 0) {
+          // 行内容通常是骨架先插入、文本后填充；带文本的节点才可能改变匹配结果
+          if (!node.textContent || node.textContent.trim().length === 0)
+            continue;
+        }
+        // 所属行内容已变化，强制重算（绕过按 topicId 的缓存）
+        // 提升到最外层命中元素：搜索结果等场景下内层 [data-topic-id] 也符合选择器，
+        // 直接用会把状态打在内层上
+        let host = node.parentElement?.closest(TOPIC_SELECTORS);
+        if (host) {
+          let outer = host.parentElement?.closest(TOPIC_SELECTORS);
+          while (outer) {
+            host = outer;
+            outer = host.parentElement?.closest(TOPIC_SELECTORS);
+          }
+          applyTopicState(host, findMatchedKeyword(host, true));
+          clearNestedState(host);
+        }
+        for (const row of descendants) {
+          if (row.parentElement?.closest(TOPIC_SELECTORS)) {
+            clearNestedState(row);
+            continue;
+          }
+          applyTopicState(row, findMatchedKeyword(row));
+        }
+      }
+    }
   }
 
   async function init() {
