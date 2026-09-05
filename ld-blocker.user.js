@@ -87,7 +87,8 @@
   let kwLower = [];
 
   function refreshKeywordCache() {
-    kwLower = settings.keywords.map((k) => k.toLocaleLowerCase());
+    // 与文本侧统一走 normalizeText，保证大小写归一化一致且对空值安全
+    kwLower = settings.keywords.map((k) => normalizeText(k));
     kwVersion++;
   }
 
