@@ -1,15 +1,14 @@
 /* eslint-disable */
 // ============================================================================
-// Linux.do Keyword Blocker — 海量关键词压测（浏览器控制台运行，linux.do 已登录页面）
+// Linux.do Keyword Blocker — 海量关键词压测（Chrome DevTools MCP 驱动，见 tests/README.md）
 // ============================================================================
 //
 // 【运行前提】
-//   1. 页面已刷新（避免多实例），且已登录；
-//   2. 先注入两个全局变量：
-//        window.__LKCB_SOURCE__          = `<ld-blocker.user.js 完整内容>`
-//        window.__LKCB_STRESS_KEYWORDS__ = [`关键词1`, `关键词2`, ...]（≥50 个）
-//      关键词来自 tests/stress-keywords.txt（纯逗号分隔，可整行复制直接粘贴
-//      进面板输入框导入），本地自动化流程读取后按逗号切分注入。
+//   1. MCP 连接的 Chrome 已登录 linux.do，页面已刷新（避免多实例）；
+//   2. 本地服务 node tests/serve.js 已启动；
+//   3. 按tests/README.md 的通用注入模式拉取并 eval 本文件；注入时同时把
+//      tests/stress-keywords.txt（纯逗号分隔，可整行复制直接粘贴进面板输入框
+//      导入）按逗号切分为 window.__LKCB_STRESS_KEYWORDS__（≥50 个）。
 //
 // 【流程】海量关键词依次压测两个表面：
 //   A. 悬浮面板：油猴菜单命令触发 → 渲染耗时 → 结构检查（胶囊数/内部滚动/

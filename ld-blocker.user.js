@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.1
+// @version      2.3
 // @description  用关键词屏蔽 linux.do 上不想看到的帖子
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -209,7 +209,7 @@
 #lkcb-menu-entry svg { pointer-events: none; }
 #lkcb-quick-access { display: none; padding: 12px; font-size: 14px; color: var(--primary, #222222); }
 .panel-body-contents[data-lkcb-view="keywords"] .quick-access-panel:not(#lkcb-quick-access) { display: none !important; }
-.panel-body-contents[data-lkcb-view="keywords"] #lkcb-quick-access { display: flex; flex-direction: column; max-height: 100%; overflow: hidden; }
+.panel-body-contents[data-lkcb-view="keywords"] #lkcb-quick-access { display: flex; flex-direction: column; justify-content: flex-start; max-height: 100%; overflow: hidden; }
 #lkcb-quick-access .lkcb-status { margin: 0 0 10px; font-size: 12px; color: var(--primary-medium, #919191); }
 #lkcb-quick-access .lkcb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 #lkcb-quick-access .lkcb-row label { font-size: 13px; white-space: nowrap; cursor: pointer; }
@@ -219,7 +219,7 @@
 #lkcb-quick-access select { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); }
 #lkcb-quick-access .lkcb-label { font-size: 12px; color: var(--primary-medium, #919191); white-space: nowrap; }
 #lkcb-quick-access ul.lkcb-keywords { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
-#lkcb-quick-access ul.lkcb-keywords li { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 3px 10px; border: 1px solid var(--primary-low, #dddddd); border-radius: 9999px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; }
+#lkcb-quick-access ul.lkcb-keywords li { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; box-sizing: border-box; padding: 3px 10px; border: 1px solid var(--primary-low, #dddddd); border-radius: 9999px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; }
 #lkcb-quick-access ul.lkcb-keywords span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #lkcb-quick-access ul.lkcb-keywords button { flex-shrink: 0; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 14px; line-height: 1; cursor: pointer; }
 #lkcb-quick-access ul.lkcb-keywords button:hover { color: var(--danger, #ff5555); }
@@ -227,7 +227,7 @@
 #lkcb-quick-access .lkcb-footer { display: flex; justify-content: flex-end; gap: 6px; }
 /* 未登录时的独立悬浮面板：油猴菜单命令触发，页面平时不显示任何按钮 */
 #lkcb-float { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 10000; width: 372px; max-width: calc(100vw - 20px); height: max-content; max-height: calc(100vh - 100px); border: 1px solid var(--primary-low, #dddddd); border-radius: 8px; background: var(--secondary, #ffffff); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); overflow: hidden; display: flex; flex-direction: column; }
-#lkcb-float #lkcb-quick-access { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#lkcb-float #lkcb-quick-access { display: flex; flex-direction: column; justify-content: flex-start; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #lkcb-float-close { position: absolute; top: 6px; right: 6px; z-index: 1; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: var(--primary-low, #dddddd); color: var(--primary-medium, #919191); font-size: 14px; line-height: 1; cursor: pointer; }
 #lkcb-float-close:hover { color: var(--primary, #222222); }`;
     document.documentElement.appendChild(style);

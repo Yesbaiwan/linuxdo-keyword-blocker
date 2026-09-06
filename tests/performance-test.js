@@ -1,30 +1,34 @@
 /* eslint-disable */
 // ============================================================================
-// Linux.do Keyword Blocker — 性能测试（浏览器控制台运行，linux.do /latest 页面，已登录）
+// Linux.do Keyword Blocker — 性能测试（Chrome DevTools MCP 驱动，见 tests/README.md；
+// 运行前刷新并停在 linux.do /latest 列表页，已登录）
 // ============================================================================
 //
 // 【运行前提】
-//   1. 页面已刷新、停留在 /latest 列表页且已登录；
-//   2. 先注入：window.__LKCB_SOURCE__ = `<ld-blocker.user.js 完整内容>`。
+//   1. MCP 连接的 Chrome 已登录 linux.do，刷新后停留在 /latest；
+//   2. 本地服务 node tests/serve.js 已启动；
+//   3. 按tests/README.md 的通用注入模式拉取并 eval 本文件。
 //
 // 【关键约束】被测脚本只允许 eval 一次，且必须在首个 await 之前的同步段执行：
 //   定时器回调（await 之后的异步延续）里的 eval 会被站点 CSP 拦截
 //   （script-src 'nonce-…' 'strict-dynamic'，无 'unsafe-eval'）。
-//   因此本文件把「采样标题 → 写设置 → eval 注入」全部放在同步段，
-//   与 console-tests.js / stress-test.js 的注入模式一致。
+//   因此本文件把「采样标题 → 写设置 → eval 注入」全部放在同步段。
 //
-// 【监控手段】（本环境无 CDP 抓包，用 Performance API 等价替代；
-//   如需报文级抓包，用真实 Chrome 的 DevTools Network 面板手动核对）
+// 【监控手段】
 //   1. CLS：PerformanceObserver(layout-shift, buffered) 累计布局偏移分数；
 //      页面加载期的历史偏移由 buffered 条目补发，基线在注入后、风暴前截取；
 //   2. 长任务：PerformanceObserver(longtask) 记录 >50ms 的主线程阻塞；
+//      注意真实 Chrome 下 Discourse 自己渲染长列表也会产生多个 1-2s 长任务；
 //   3. 隐藏延迟：配对 MutationObserver——行插入时间戳 vs data-lkcb-state
-//      出现时间戳，差值即「新行从插入到被隐藏」的真实延迟。站点的无限滚动
-//      在合成滚动下不稳定，自然新行不保证命中，因此风暴后追加确定性探针：
-//      克隆已隐藏行、剥掉状态标记、重新插回表格——走同一条
-//      「观察器 → 匹配 → 打标记」生产管线，保证有样本可测；
+//      出现时间戳。真实 Chrome 下新行以骨架先插入、文本后填充，延迟（实测
+//      avg 90-120ms）含文本填充时间；行在填充前只是灰色骨架，探针期
+//      CLS≈0 才是「绘制前隐藏、无闪现」的权威指标；
 //   4. 网络请求量：Resource Timing 统计滚动加载期间的请求数与传输字节数增量
-//      （Discourse 无限滚动靠 XHR 拉取 topics.json/message-bus）。
+//      （开头需 setResourceTimingBufferSize 扩容，默认 250 条会写满）。
+//
+// 【MCP 侧增强检查】（页内断言之外的第二层，见 tests/README.md 第五节）
+//   list_network_requests 核对 /latest.json 等真实请求；performance_start_trace
+//   可获得浏览器级 LCP/CLS/INP insight。
 //
 // 【流程】同步段：监控 + 探测词采样 + 注入 → 基线期 900ms → 滚动风暴
 //   （12 轮 × 1500px，合成 wheel 事件 + scrollBy，触发无限滚动）
