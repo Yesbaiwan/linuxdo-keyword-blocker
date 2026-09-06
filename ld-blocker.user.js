@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      1.3
+// @version      2.1
 // @description  用关键词屏蔽 linux.do 上不想看到的帖子
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -23,12 +23,12 @@
     enabled: true,
     keywords: [],
     hideMode: 'hide',
-    triggerPosition: null,
   };
 
   let settings = { ...DEFAULT_SETTINGS };
   let observer = null;
-  let panelOpen = false;
+  // 「屏蔽词」标签当前是否处于激活状态（头像菜单内容区切换到关键词管理视图）
+  let keywordTabActive = false;
 
   const TOPIC_SELECTORS = [
     '.fps-result',
@@ -48,13 +48,24 @@
     "a[href^='/t/']",
   ].join(',');
 
-  const REFERENCE_BUTTON_SELECTOR = '.language-switcher-trigger';
+  // 登录后点击右上角头像出现的用户菜单；未登录时不存在，因此无入口
+  const USER_MENU_PANEL_SELECTOR = '.user-menu.menu-panel';
+  // 入口做成和「个人资料」同款的标签按钮，插在它下面（标签列最底部）
+  const PROFILE_TAB_ID = 'user-menu-button-profile';
+  const MENU_TABS_FALLBACK_SELECTOR = '.user-menu.menu-panel .menu-tabs-container';
+  // 这些节点被移除意味着整个菜单面板被销毁（关闭）
+  const MENU_CLOSE_MARKERS = '.user-menu.menu-panel, .user-menu-dropdown-wrapper';
 
   // ===== storage =====
 
   async function loadSettings() {
     const stored = await GM.getValue(STORAGE_KEY, null);
-    const parsed = stored ? JSON.parse(stored) : {};
+    let parsed = {};
+    try {
+      if (stored) parsed = JSON.parse(stored);
+    } catch (e) {
+      // 存储内容损坏时保持空对象，回退默认设置，别让整个脚本挂掉
+    }
     settings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -68,7 +79,7 @@
     settings.keywords = normalizeKeywords(settings.keywords);
     refreshKeywordCache();
     await GM.setValue(STORAGE_KEY, JSON.stringify(settings));
-    renderPanel();
+    renderKeywordTab();
     scanTopics();
   }
 
@@ -96,8 +107,19 @@
   const matchCache = new Map();
   const nodeMatchCache = new WeakMap();
 
+  // 按优先级逐个选择器取第一个非空文本。不能用逗号合并的 querySelector：
+  // 它按文档序返回第一个匹配——置顶帖的「置顶」切换按钮（空文本的 a）在文档序上
+  // 先于标题出现，会把标题顶掉，导致置顶帖永远无法按标题关键词过滤。
+  function firstNonEmptyText(topic, selectorList) {
+    for (const sel of selectorList.split(',')) {
+      const t = topic.querySelector(sel)?.textContent?.trim();
+      if (t) return t;
+    }
+    return '';
+  }
+
   function getTopicText(topic) {
-    const title = topic.querySelector(TITLE_SELECTORS)?.textContent || '';
+    const title = firstNonEmptyText(topic, TITLE_SELECTORS);
     const aria = topic.getAttribute('aria-label') || '';
     const category = topic.querySelector('.category-name')?.textContent || '';
     const tags = [...topic.querySelectorAll('.discourse-tag, .tag-wrapper')]
@@ -181,118 +203,83 @@
     style.textContent = `[data-lkcb-state="hidden"] { display: none !important; }
 [data-lkcb-state="dimmed"] { opacity: 0.2 !important; }
 [data-lkcb-state="dimmed"]:hover { opacity: 0.8 !important; }
-#lkcb-trigger { position: fixed; top: 10px; right: 20px; left: auto; bottom: auto; z-index: 99999; padding: 8px 12px; border: 1px solid #414350; border-radius: 4px; background: #373a47; color: #f2f2f2; cursor: move; font-family: system-ui, sans-serif; font-size: 14px; user-select: none; }
-#lkcb-trigger:hover { background: #4a4e5e; }
-#lkcb-trigger.dragging { cursor: grabbing; }
-#lkcb-panel { position: fixed; z-index: 99999; width: 560px; max-width: 90vw; max-height: calc(100vh - 100px); overflow: auto; display: none; padding: 16px; border: 1px solid #414350; border-radius: 4px; background: #373a47; color: #f2f2f2; font-family: system-ui, sans-serif; font-size: 14px; line-height: 1.4; }
-#lkcb-panel.open { display: block; }
-#lkcb-panel * { color: #f2f2f2; }
-#lkcb-panel h1 { margin: 0 0 4px; font-size: 16px; color: #fff; }
-#lkcb-panel p { margin: 0; color: #a3a4aa; font-size: 12px; }
-#lkcb-panel header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
-#lkcb-panel .lkcb-header-actions { display: flex; align-items: center; gap: 10px; }
-#lkcb-panel header label { font-size: 13px; white-space: nowrap; cursor: pointer; }
-#lkcb-panel header input { margin-right: 4px; }
-#lkcb-panel #lkcb-close { border: 1px solid #414350; border-radius: 4px; background: #2d303e; color: #a3a4aa; padding: 2px 8px; font-size: 18px; line-height: 1; cursor: pointer; }
-#lkcb-panel #lkcb-close:hover { background: #414350; color: #f2f2f2; }
-#lkcb-panel .lkcb-row { display: flex; gap: 8px; margin-bottom: 12px; }
-#lkcb-panel .lkcb-row input { flex: 1; padding: 6px 8px; border: 1px solid #414350; border-radius: 4px; background: #2d303e; color: #f2f2f2; }
-#lkcb-panel .lkcb-row button { padding: 6px 14px; border: 1px solid #bd93f9; border-radius: 4px; background: #bd93f9; color: #2d303e; cursor: pointer; }
-#lkcb-panel .lkcb-row button:hover { background: #d1b3ff; border-color: #d1b3ff; }
-#lkcb-panel .lkcb-field { margin-bottom: 12px; }
-#lkcb-panel .lkcb-field label { display: block; margin-bottom: 4px; font-size: 12px; color: #a3a4aa; }
-#lkcb-panel .lkcb-field select { padding: 6px 8px; border: 1px solid #414350; border-radius: 4px; background: #2d303e; color: #f2f2f2; }
-#lkcb-panel .lkcb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-#lkcb-panel .lkcb-list li { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 10px; border: 1px solid #414350; border-radius: 9999px; background: #2d303e; }
-#lkcb-panel .lkcb-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#lkcb-panel .lkcb-list button { border: none; background: none; color: #a3a4aa; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; flex-shrink: 0; }
-#lkcb-panel .lkcb-list button:hover { color: #ff5555; }
-#lkcb-panel .lkcb-empty { padding: 20px; text-align: center; color: #a3a4aa; font-size: 13px; border: 1px solid #414350; border-radius: 4px; background: #2d303e; }
-#lkcb-panel .lkcb-footer { display: flex; justify-content: flex-end; margin-top: 12px; }
-#lkcb-panel .lkcb-footer button { border: 1px solid #414350; border-radius: 4px; background: #2d303e; color: #f2f2f2; padding: 6px 14px; cursor: pointer; }
-#lkcb-panel .lkcb-footer button:hover { background: #414350; }`;
+#lkcb-menu-entry { width: 46px; height: 46px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--primary, #222222); }
+#lkcb-menu-entry:hover { color: var(--primary, #222222); }
+#lkcb-menu-entry.active { color: var(--tertiary, #0088cc); }
+#lkcb-menu-entry svg { pointer-events: none; }
+#lkcb-quick-access { display: none; padding: 12px; font-size: 14px; color: var(--primary, #222222); }
+.panel-body-contents[data-lkcb-view="keywords"] .quick-access-panel:not(#lkcb-quick-access) { display: none !important; }
+.panel-body-contents[data-lkcb-view="keywords"] #lkcb-quick-access { display: flex; flex-direction: column; max-height: 100%; overflow: hidden; }
+#lkcb-quick-access .lkcb-status { margin: 0 0 10px; font-size: 12px; color: var(--primary-medium, #919191); }
+#lkcb-quick-access .lkcb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+#lkcb-quick-access .lkcb-row label { font-size: 13px; white-space: nowrap; cursor: pointer; }
+#lkcb-quick-access .lkcb-grow { flex: 1; min-width: 0; }
+#lkcb-quick-access input[type="text"] { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); }
+#lkcb-quick-access input[type="text"]:focus { outline: 2px solid var(--tertiary, #0088cc); outline-offset: -1px; }
+#lkcb-quick-access select { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); }
+#lkcb-quick-access .lkcb-label { font-size: 12px; color: var(--primary-medium, #919191); white-space: nowrap; }
+#lkcb-quick-access ul.lkcb-keywords { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+#lkcb-quick-access ul.lkcb-keywords li { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 3px 10px; border: 1px solid var(--primary-low, #dddddd); border-radius: 9999px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; }
+#lkcb-quick-access ul.lkcb-keywords span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#lkcb-quick-access ul.lkcb-keywords button { flex-shrink: 0; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 14px; line-height: 1; cursor: pointer; }
+#lkcb-quick-access ul.lkcb-keywords button:hover { color: var(--danger, #ff5555); }
+#lkcb-quick-access .lkcb-empty { margin-bottom: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; }
+#lkcb-quick-access .lkcb-footer { display: flex; justify-content: flex-end; gap: 6px; }
+/* 未登录时的独立悬浮面板：油猴菜单命令触发，页面平时不显示任何按钮 */
+#lkcb-float { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 10000; width: 372px; max-width: calc(100vw - 20px); height: max-content; max-height: calc(100vh - 100px); border: 1px solid var(--primary-low, #dddddd); border-radius: 8px; background: var(--secondary, #ffffff); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); overflow: hidden; display: flex; flex-direction: column; }
+#lkcb-float #lkcb-quick-access { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#lkcb-float-close { position: absolute; top: 6px; right: 6px; z-index: 1; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: var(--primary-low, #dddddd); color: var(--primary-medium, #919191); font-size: 14px; line-height: 1; cursor: pointer; }
+#lkcb-float-close:hover { color: var(--primary, #222222); }`;
     document.documentElement.appendChild(style);
   }
 
-  // ===== panel =====
+  // ===== 头像菜单内的关键词管理视图 =====
 
-  function createPanel() {
-    if (document.getElementById('lkcb-panel')) return;
-
-    const panel = document.createElement('div');
-    panel.id = 'lkcb-panel';
+  // 构建菜单内容区里的管理界面：容器复用原生 quick-access-panel 类，
+  // 按钮复用 Discourse 的 btn/btn-primary/btn-default，颜色走主题变量，观感与原生一致
+  function buildKeywordTab() {
+    const container = document.createElement('div');
+    container.id = 'lkcb-quick-access';
+    container.className = 'quick-access-panel';
     // prettier-ignore
-    panel.innerHTML = `<header>
-    <div>
-        <h1>Linux.do 屏蔽词</h1>
-        <p id="lkcb-status">正在读取设置</p>
-    </div>
-    <div class="lkcb-header-actions">
-        <label><input id="lkcb-enabled" type="checkbox" /> 启用屏蔽</label>
-        <button id="lkcb-close" type="button" title="关闭">×</button>
-    </div>
-</header>
-
+    container.innerHTML = `<p id="lkcb-status" class="lkcb-status">正在读取设置</p>
 <div class="lkcb-row">
-    <input id="lkcb-input" type="text" autocomplete="off" placeholder="输入关键词，多个用逗号分隔" />
-    <button id="lkcb-add" type="button">添加</button>
+    <input id="lkcb-enabled" type="checkbox" />
+    <label for="lkcb-enabled">启用屏蔽</label>
 </div>
-
-<div class="lkcb-field">
-    <label>处理</label>
-    <select id="lkcb-hideMode">
+<div class="lkcb-row">
+    <input id="lkcb-input" type="text" autocomplete="off" placeholder="输入关键词，逗号分隔" />
+    <button id="lkcb-add" class="btn btn-primary" type="button">添加</button>
+</div>
+<div class="lkcb-row">
+    <span class="lkcb-label">处理</span>
+    <select id="lkcb-hideMode" class="lkcb-grow">
         <option value="hide">直接隐藏</option>
         <option value="dim">淡化显示</option>
     </select>
 </div>
-
-<div id="lkcb-empty" class="lkcb-empty">还没有关键词</div>
-<ul id="lkcb-list" class="lkcb-list"></ul>
-
+<ul id="lkcb-keywords" class="lkcb-keywords"></ul>
+<div id="lkcb-empty" class="lkcb-empty" hidden>还没有关键词</div>
 <div class="lkcb-footer">
-    <button id="lkcb-export" type="button">导出</button>
-    <button id="lkcb-reset-pos" type="button">还原位置</button>
-    <button id="lkcb-clear" type="button">清空</button>
-</div>
-`;
-    document.body.appendChild(panel);
-
-    const trigger = document.createElement('button');
-    trigger.id = 'lkcb-trigger';
-    trigger.textContent = '屏蔽词';
-    trigger.title = 'Linux.do 屏蔽词设置';
-    trigger.addEventListener('click', () => {
-      if (trigger.dataset.lkcbDragged === 'true') {
-        trigger.dataset.lkcbDragged = 'false';
-        return;
-      }
-      panelOpen = !panelOpen;
-      if (panelOpen) positionPanel();
-      panel.classList.toggle('open', panelOpen);
-    });
-    document.body.appendChild(trigger);
-
-    if (settings.triggerPosition) {
-      const { left, top } = settings.triggerPosition;
-      trigger.style.left = `${Math.max(0, Math.min(window.innerWidth - (trigger.offsetWidth || 60), left))}px`;
-      trigger.style.top = `${Math.max(0, Math.min(window.innerHeight - (trigger.offsetHeight || 30), top))}px`;
-      trigger.style.right = 'auto';
-      trigger.style.bottom = 'auto';
-    }
-
-    bindEvents();
+    <button id="lkcb-export" class="btn btn-default" type="button">导出</button>
+    <button id="lkcb-clear" class="btn btn-default" type="button">清空</button>
+</div>`;
+    // 视图在 Discourse 菜单内部：不拦截的话，点击会被菜单委托当成菜单项路由走
+    //（实测点关键词的 × 会跳到个人资料页），键盘输入会触发全局快捷键。
+    // 自身处理器绑定在子元素上，冒泡到容器时早已执行完毕，不受影响。
+    container.addEventListener('click', (event) => event.stopPropagation());
+    container.addEventListener('keydown', (event) => event.stopPropagation());
+    bindKeywordTab(container);
+    return container;
   }
 
-  function bindEvents() {
-    const input = document.getElementById('lkcb-input');
-    const add = document.getElementById('lkcb-add');
-    const enabled = document.getElementById('lkcb-enabled');
-    const hideMode = document.getElementById('lkcb-hideMode');
-    const clear = document.getElementById('lkcb-clear');
-    const exportBtn = document.getElementById('lkcb-export');
-    const resetPos = document.getElementById('lkcb-reset-pos');
-    const close = document.getElementById('lkcb-close');
-    const trigger = document.getElementById('lkcb-trigger');
+  function bindKeywordTab(container) {
+    const input = container.querySelector('#lkcb-input');
+    const add = container.querySelector('#lkcb-add');
+    const enabled = container.querySelector('#lkcb-enabled');
+    const hideMode = container.querySelector('#lkcb-hideMode');
+    const clear = container.querySelector('#lkcb-clear');
+    const exportBtn = container.querySelector('#lkcb-export');
 
     add.addEventListener('click', async () => {
       const raw = input.value.trim();
@@ -339,204 +326,210 @@
       a.remove();
       URL.revokeObjectURL(url);
     });
-
-    resetPos.addEventListener('click', async () => {
-      const trigger = document.getElementById('lkcb-trigger');
-      if (trigger) delete trigger.dataset.lkcbPlaced;
-      await saveSettings({ triggerPosition: null });
-      positionTriggerDefault();
-      if (panelOpen) positionPanel();
-    });
-
-    close.addEventListener('click', () => {
-      panelOpen = false;
-      document.getElementById('lkcb-panel').classList.remove('open');
-    });
-
-    document.addEventListener('click', (event) => {
-      if (!panelOpen) return;
-      const panel = document.getElementById('lkcb-panel');
-      const path = event.composedPath();
-      if (
-        panel &&
-        trigger &&
-        !path.includes(panel) &&
-        !path.includes(trigger)
-      ) {
-        panelOpen = false;
-        panel.classList.remove('open');
-      }
-    });
-
-    makeDraggable(trigger);
   }
 
-  function positionPanel() {
-    const trigger = document.getElementById('lkcb-trigger');
-    const panel = document.getElementById('lkcb-panel');
-    if (!trigger || !panel) return;
+  // 渲染管理视图。target 缺省时渲染当前存在的所有实例（菜单视图和悬浮面板可能并存）
+  function renderKeywordTab(target) {
+    const containers = target
+      ? [target]
+      : [...document.querySelectorAll('#lkcb-quick-access')];
+    for (const container of containers) {
+      const status = container.querySelector('#lkcb-status');
+      const enabled = container.querySelector('#lkcb-enabled');
+      const hideMode = container.querySelector('#lkcb-hideMode');
+      const list = container.querySelector('#lkcb-keywords');
+      const empty = container.querySelector('#lkcb-empty');
 
-    const rect = trigger.getBoundingClientRect();
-    const panelWidth = Math.min(560, window.innerWidth - 20);
-    const minGap = 10;
+      status.textContent = settings.enabled
+        ? `已启用，${settings.keywords.length} 个关键词`
+        : `已暂停，${settings.keywords.length} 个关键词`;
+      enabled.checked = settings.enabled;
+      hideMode.value = settings.hideMode;
 
-    // 横向：哪边空间大就往哪边展开
-    const spaceRight = window.innerWidth - rect.right;
-    const spaceLeft = rect.left;
+      list.replaceChildren();
+      empty.hidden = settings.keywords.length > 0;
 
-    if (spaceRight >= spaceLeft) {
-      // 向右展开：面板左对齐按钮左侧
-      let left = rect.left;
-      if (left + panelWidth > window.innerWidth - minGap) {
-        left = window.innerWidth - panelWidth - minGap;
-      }
-      left = Math.max(minGap, left);
-      panel.style.left = left + 'px';
-      panel.style.right = 'auto';
-    } else {
-      // 向左展开：面板右对齐按钮右侧
-      let right = window.innerWidth - rect.right;
-      if (right + panelWidth > window.innerWidth - minGap) {
-        right = window.innerWidth - panelWidth - minGap;
-      }
-      right = Math.max(minGap, right);
-      panel.style.right = right + 'px';
-      panel.style.left = 'auto';
-    }
-
-    // 纵向：哪边空间大就往哪边展开
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-
-    if (spaceBelow >= spaceAbove) {
-      panel.style.top = rect.bottom + 8 + 'px';
-      panel.style.bottom = 'auto';
-    } else {
-      panel.style.bottom = window.innerHeight - rect.top + 8 + 'px';
-      panel.style.top = 'auto';
-    }
-
-    panel.style.width = panelWidth + 'px';
-  }
-
-  function positionTriggerDefault() {
-    const trigger = document.getElementById('lkcb-trigger');
-    if (!trigger || settings.triggerPosition || trigger.dataset.lkcbPlaced)
-      return;
-
-    const ref = document.querySelector(REFERENCE_BUTTON_SELECTOR);
-    if (!ref) return;
-
-    const rect = ref.getBoundingClientRect();
-    trigger.style.top = '10px';
-    trigger.style.right = `${window.innerWidth - rect.left + 20}px`;
-    trigger.style.left = 'auto';
-    trigger.style.bottom = 'auto';
-    trigger.dataset.lkcbPlaced = 'true';
-  }
-
-  function makeDraggable(el) {
-    let dragging = false;
-    let startX, startY, startLeft, startTop;
-
-    function endDrag() {
-      if (!dragging) return;
-      dragging = false;
-      el.classList.remove('dragging');
-      if (el.dataset.lkcbDragged === 'true') {
-        settings.triggerPosition = {
-          left: parseInt(el.style.left, 10) || 0,
-          top: parseInt(el.style.top, 10) || 0,
-        };
-        GM.setValue(STORAGE_KEY, JSON.stringify(settings));
-      }
-    }
-
-    el.addEventListener('mousedown', (e) => {
-      dragging = true;
-      el.dataset.lkcbDragged = 'false';
-      el.classList.add('dragging');
-      startX = e.clientX;
-      startY = e.clientY;
-      const rect = el.getBoundingClientRect();
-      startLeft = rect.left;
-      startTop = rect.top;
-      el.style.left = startLeft + 'px';
-      el.style.top = startTop + 'px';
-      el.style.right = 'auto';
-      el.style.bottom = 'auto';
-      e.preventDefault();
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!dragging) return;
-      el.dataset.lkcbDragged = 'true';
-      el.style.left =
-        Math.max(
-          0,
-          Math.min(
-            window.innerWidth - el.offsetWidth,
-            startLeft + e.clientX - startX,
-          ),
-        ) + 'px';
-      el.style.top =
-        Math.max(
-          0,
-          Math.min(
-            window.innerHeight - el.offsetHeight,
-            startTop + e.clientY - startY,
-          ),
-        ) + 'px';
-      if (panelOpen) positionPanel();
-    });
-
-    document.addEventListener('mouseup', endDrag);
-    document.addEventListener('mouseleave', endDrag);
-    window.addEventListener('blur', endDrag);
-  }
-
-  function renderPanel() {
-    const status = document.getElementById('lkcb-status');
-    const enabled = document.getElementById('lkcb-enabled');
-    const hideMode = document.getElementById('lkcb-hideMode');
-    const list = document.getElementById('lkcb-list');
-    const empty = document.getElementById('lkcb-empty');
-
-    if (!status) return;
-
-    status.textContent = settings.enabled
-      ? `已启用，${settings.keywords.length} 个关键词`
-      : `已暂停，${settings.keywords.length} 个关键词`;
-    enabled.checked = settings.enabled;
-    hideMode.value = settings.hideMode;
-
-    list.replaceChildren();
-    empty.hidden = settings.keywords.length > 0;
-
-    for (const keyword of settings.keywords) {
-      const li = document.createElement('li');
-      const span = document.createElement('span');
-      const remove = document.createElement('button');
-      span.textContent = keyword;
-      span.title = keyword;
-      remove.textContent = '×';
-      remove.title = `移除 ${keyword}`;
-      remove.addEventListener('click', () => {
-        saveSettings({
-          keywords: settings.keywords.filter((k) => k !== keyword),
+      for (const keyword of settings.keywords) {
+        const li = document.createElement('li');
+        const span = document.createElement('span');
+        const remove = document.createElement('button');
+        span.textContent = keyword;
+        span.title = keyword;
+        remove.textContent = '×';
+        remove.title = `移除 ${keyword}`;
+        remove.addEventListener('click', () => {
+          saveSettings({
+            keywords: settings.keywords.filter((k) => k !== keyword),
+          });
         });
-      });
-      li.append(span, remove);
-      list.append(li);
+        li.append(span, remove);
+        list.append(li);
+      }
+    }
+  }
+
+  // 「屏蔽词」标签激活：隐藏原生内容区（打在 panel-body-contents 的 data 属性上，
+  // 与帖子行同理，Ember 重写 class 不影响），显示关键词管理视图
+  function activateKeywordView() {
+    keywordTabActive = true;
+    const contents = document.querySelector(
+      '.user-menu.menu-panel .panel-body-contents',
+    );
+    if (!contents) return;
+    // 只查本菜单内的视图实例：悬浮面板可能同时存在同 id 的另一份
+    let view = contents.querySelector('#lkcb-quick-access');
+    if (!view) {
+      view = buildKeywordTab();
+      contents.appendChild(view);
+    }
+    contents.dataset.lkcbView = 'keywords';
+    // active 态与原生标签切换保持一致：自己点亮，其余熄灭
+    contents.querySelectorAll('.user-menu-tab.active').forEach((tab) => {
+      if (tab.id !== 'lkcb-menu-entry') tab.classList.remove('active');
+    });
+    document.getElementById('lkcb-menu-entry')?.classList.add('active');
+    renderKeywordTab(view);
+  }
+
+  // 切回原生标签视图（点任意原生标签时调用）
+  function deactivateKeywordView() {
+    keywordTabActive = false;
+    const contents = document.querySelector(
+      '.user-menu.menu-panel .panel-body-contents',
+    );
+    if (!contents) return;
+    delete contents.dataset.lkcbView;
+    document.getElementById('lkcb-menu-entry')?.classList.remove('active');
+  }
+
+  // Ember 可能异步重渲染菜单内容（如通知轮询），此时重建视图并恢复激活态
+  function assertKeywordView(node) {
+    if (!keywordTabActive) return;
+    // 只关心菜单内部的变更
+    if (!node.closest?.('.user-menu.menu-panel')) return;
+    const contents = document.querySelector(
+      '.user-menu.menu-panel .panel-body-contents',
+    );
+    if (!contents) return;
+    const view = contents.querySelector('#lkcb-quick-access');
+    if (!view || !contents.dataset.lkcbView) {
+      activateKeywordView();
+    }
+  }
+
+  // ===== 未登录时的独立悬浮面板 =====
+
+  let floatOutsideAbort = null;
+
+  // 登录态走头像菜单；未登录时没有头像，油猴菜单命令直接弹出独立面板。
+  // 页面平时不渲染任何按钮，只在命令触发时出现，避免挡住「登录」等原生元素。
+  function openFloatPanel() {
+    if (document.getElementById('lkcb-float')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'lkcb-float';
+    const close = document.createElement('button');
+    close.id = 'lkcb-float-close';
+    close.type = 'button';
+    close.title = '关闭';
+    close.setAttribute('aria-label', '关闭');
+    close.textContent = '×';
+    close.addEventListener('click', () => closeFloatPanel());
+    wrap.appendChild(close);
+    wrap.appendChild(buildKeywordTab());
+    document.body.appendChild(wrap);
+    renderKeywordTab(wrap.querySelector('#lkcb-quick-access'));
+
+    // 点面板外任意处关闭（面板内部点击已被 buildKeywordTab 拦截冒泡，不会误关）
+    floatOutsideAbort = new AbortController();
+    document.addEventListener(
+      'click',
+      (event) => {
+        if (!wrap.contains(event.target)) closeFloatPanel();
+      },
+      { signal: floatOutsideAbort.signal },
+    );
+  }
+
+  function closeFloatPanel() {
+    const wrap = document.getElementById('lkcb-float');
+    if (!wrap) return;
+    floatOutsideAbort?.abort();
+    floatOutsideAbort = null;
+    wrap.remove();
+  }
+
+  // ===== 头像菜单入口 =====
+
+  // Discourse 每次打开头像菜单都会重新渲染整个面板（关闭即销毁），
+  // 因此靠 MutationObserver 在面板出现时同步注入入口，销毁随面板走，无需清理
+  function injectMenuEntry() {
+    if (document.getElementById('lkcb-menu-entry')) return;
+    // 标签按钮 id 全局唯一，直接定位插入点；不依赖面板选择器的文档顺序
+    //（li#current-user 关闭时也带 user-menu-panel 类，querySelector 可能命中它）
+    const profileTab = document.getElementById(PROFILE_TAB_ID);
+    const tabsList =
+      profileTab?.parentElement ||
+      document.querySelector(MENU_TABS_FALLBACK_SELECTOR);
+    if (!tabsList) return;
+
+    const button = document.createElement('button');
+    button.id = 'lkcb-menu-entry';
+    // 复用 Discourse 标签按钮的类，外观与「个人资料」等保持一致
+    button.className = 'btn btn-flat btn-icon no-text user-menu-tab';
+    button.type = 'button';
+    button.title = '屏蔽词';
+    button.setAttribute('aria-label', '屏蔽词');
+    // prettier-ignore
+    button.innerHTML = `<svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><path fill="currentColor" d="M3 4h18l-7 8.5V20l-4 2.5v-10z"/></svg>`;
+    button.addEventListener('click', (event) => {
+      // 不让事件冒泡给 Discourse，避免被当成标签切换处理
+      event.stopPropagation();
+      activateKeywordView();
+    });
+    if (profileTab) profileTab.insertAdjacentElement('afterend', button);
+    else tabsList.appendChild(button);
+  }
+
+  // 新增节点里出现用户菜单面板时立即注入（同步于绘制前，无闪烁）
+  function watchForMenuPanel(node) {
+    if (
+      node.matches?.(USER_MENU_PANEL_SELECTOR) ||
+      node.querySelector?.(USER_MENU_PANEL_SELECTOR)
+    ) {
+      injectMenuEntry();
     }
   }
 
   // ===== observer & init =====
 
   function startObserver() {
+    // 原生标签分属 top-tabs / bottom-tabs 两组容器，且面板每次打开都重建，
+    // 所以在 document 上挂一个捕获监听统一处理「点原生标签 → 切回原生视图」，
+    // 不随面板销毁重建，也覆盖两组标签
+    document.addEventListener(
+      'click',
+      (event) => {
+        if (!keywordTabActive) return;
+        const tab = event.target?.closest?.('.user-menu-tab');
+        if (tab && tab.id !== 'lkcb-menu-entry') deactivateKeywordView();
+      },
+      true,
+    );
     if (observer) observer.disconnect();
     observer = new MutationObserver((mutations) => {
-      if (!settings.triggerPosition) positionTriggerDefault();
+      // 菜单关闭时 Discourse 销毁整个面板；复位标签状态，
+      // 保证重开菜单时回到原生默认视图（与原生行为一致）
+      for (const mutation of mutations) {
+        for (const node of mutation.removedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if (
+            node.matches?.(MENU_CLOSE_MARKERS) ||
+            node.querySelector?.('#lkcb-menu-entry')
+          ) {
+            keywordTabActive = false;
+          }
+        }
+      }
       handleAddedNodes(mutations);
     });
     observer.observe(document.body, {
@@ -553,6 +546,8 @@
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         if (typeof node.id === 'string' && node.id.startsWith('lkcb-'))
           continue;
+        assertKeywordView(node);
+        watchForMenuPanel(node);
         if (!active) {
           // 屏蔽关闭时，清掉 Ember 回收复用节点上可能残留的旧状态
           node.removeAttribute('data-lkcb-state');
@@ -609,27 +604,18 @@
   async function init() {
     injectStyles();
     await loadSettings();
-    createPanel();
-    renderPanel();
-    positionTriggerDefault();
+    injectMenuEntry();
     scanTopics();
     startObserver();
 
-    window.addEventListener('resize', () => {
-      positionTriggerDefault();
-      if (panelOpen) positionPanel();
-    });
-
     try {
       GM.registerMenuCommand('打开 Linux.do 屏蔽词设置', () => {
-        const panel = document.getElementById('lkcb-panel');
-        if (panel) {
-          panelOpen = true;
-          panel.classList.add('open');
-        }
+        // 无论是否登录，菜单命令一律直接弹独立悬浮面板；
+        // 登录用户另可走头像菜单里的「屏蔽词」标签
+        openFloatPanel();
       });
     } catch (e) {
-      // optional
+      // GM 菜单 API 不可用时跳过即可，主功能不受影响
     }
   }
 
