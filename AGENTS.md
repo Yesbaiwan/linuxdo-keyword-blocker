@@ -4,7 +4,7 @@
 
 Linux.do Keyword Blocker — 单文件 Tampermonkey 用户脚本（`ld-blocker.user.js`），用「类别/标签/标题」规则自动隐藏/淡化 linux.do 的帖子。无构建、无依赖、纯 DOM API；文件直接装入 Tampermonkey。UI 文案使用简体中文。
 
-## 用户需求（当前产品形态，2.4.0）
+## 用户需求（当前产品形态，2.4.1）
 
 - 强制登录使用：未登录（头部无 `#current-user`，Discourse 登录后才渲染）时脚本不启动——不过滤、不注入任何 UI；登录后（含 SPA 登录，观察器检测到 `#current-user` 出现）自动启动。悬浮面板与油猴菜单命令已移除。
 - 登录入口：头像下拉菜单标签列最底部（「个人资料」下方）的「屏蔽规则」标签按钮，样式与原生标签一致；点击后菜单内容区切换为规则管理视图。
@@ -34,12 +34,13 @@ Linux.do Keyword Blocker — 单文件 Tampermonkey 用户脚本（`ld-blocker.u
 - 改动后必须在 linux.do 本站浏览器实测验证（小步、逐项），不能用原版 Discourse 站点或纯推断代替。
 - 自动化测试环境：chrome-devtools-mcp 控制的真实 Chrome（2026-09 从 ZCode 内置浏览器迁移，用户明确弃用内置浏览器），唯一测试环境。启动/注入/轮询流程、CSP 约束与 MCP 侧增强检查（真实控制台监控、网络请求清单、性能追踪、截图目检）统一见 `tests/README.md` 运行手册。真实 Chrome 下无限滚动可被合成 wheel 稳定触发；隐藏延迟均值 90–120ms 属 Ember 骨架→文本填充节奏，CLS≈0 才是闪现权威指标。仍非通用环境：可疑偶发失败先怀疑测试环境——重试再判断，不要为此在脚本或测试代码里加环境补丁。
 - 会话恢复：`linux.do_cookies.txt`（Netscape 格式，已 gitignore）。登出测试后用它恢复登录；令牌有效性与登出是否吊销有关，恢复失败需用户手动登录。
-- 自动化回归（五件套，全部由 Chrome DevTools MCP 按 `tests/README.md` 流程驱动；重复运行前先刷新页面）：
-  - `tests/console-tests.js`：33 项功能断言（登录门槛——未登录不启动/登录自动启动/入口位置/视图切换/旧关键词存储迁移/规则 CRUD/类别选择器 picker——输入过滤/点选回显/× 清除/类别徽章与标签/类别精确匹配——父分类不连带子分类、子分类单独命中/标题匹配/组合规则 AND 语义含三字段/单规则启停/行内编辑——展开回填/保存/取消/模式/总开关/标签切换）+ 运行流程的独立阶段验证存储损坏回退（刷新 → 预写坏 JSON → 注入 → 断言零报错且回退默认设置）。运行按 `tests/README.md` 通用注入模式。
-  - `tests/stress-test.js` + `tests/stress-keywords.txt`：97 个有意义的词（交易/广告/求职/技术词等真实屏蔽场景，含 `C++`、`.NET` 等特殊字符词与长句），测试将其转为仅标题规则后压测头像菜单视图，检查内部滚动、footer 可见、无横向溢出、滚动到底删除、过滤联动。
-  - `tests/performance-test.js`：CLS（PerformanceObserver layout-shift）、隐藏延迟（行插入与 data-lkcb-state 出现的 MutationObserver 配对 + 确定性探针：克隆隐藏行剥掉标记插回，走真实观察器管线保证有样本；延迟含 Ember 骨架→文本填充时间，仅作参考——探针期 CLS≈0 才是「绘制前隐藏、无闪现」的权威证明）、长任务（注意：无脚本对照下站点自身也出现 ~3s 长任务，非脚本造成）、滚动风暴（12×1500px，合成 wheel 事件 + scrollBy——纯 scrollBy 不会触发该站加载器）、网络请求增量（Resource Timing，开头需 setResourceTimingBufferSize 扩容，默认 250 条会写满）。
-  - CSP 硬约束：脚本只允许 eval 一次，且必须在首个 await 之前的同步段执行——await 之后的定时器回调里 eval 会被站点 CSP（无 'unsafe-eval'）拦截。五件套的注入点都已遵守此约束。
-  - `tests/spa-test.js`：SPA 路由重建零闪现测试——真实点击「热门/最新」路由标签（`#navigation-bar`，不是侧边栏）触发 Ember 列表整体重建，页面不重载、脚本存活。验证：路由完成、重建列表中过滤照常生效、每次切换 CLS 增量 = 0（行未绘制即被隐藏的硬证据；隐藏延迟仅作参考，含骨架→文本填充时间）、零泄漏（命中标题规则却未隐藏的行数为 0）、零报错。「显示 N 个新话题」按钮场景（站点实时来新帖）不自动化：无法确定性触发，且底层插入管线与路由重建/perf 探针同源，已被等效覆盖。
-  - `tests/narrow-screen-test.js`：窄屏深测。视口由外部流程预设为目标窄屏后刷新再运行；覆盖滑入抽屉视图（规则行数量/内部滚动/footer 可见/无横向溢出/视图在抽屉可视区内）、过滤、页面无横向溢出（历史：长词胶囊换行/截断的 content-box 溢出 bug 由 v2.2 加 `box-sizing: border-box` 修复）。自带 43 个长短中英混合词。**必须跑两遍**：桌面 UA（覆盖媒体查询类差异）+ 移动 UA（emulate 同时设 iPhone Safari userAgent，覆盖站点移动样式表差异——v2.3 的 justify-content bug 只有移动 UA 能复现）。390/768/320 桌面 UA 与 393/320 移动 UA 在 v2.3 基线全绿；**2.4.0 重构 UI 后尚未重测**。
+- 自动化回归（六套，全部由 Chrome DevTools MCP 按 `tests/README.md` 流程驱动；重复运行前先刷新页面。目录：`tests/suites/` 放页内断言载荷、`tests/fixtures/` 放测试数据，入口文档是 `tests/README.md`）：
+  - `tests/suites/console.js`：33 项功能断言（登录门槛——未登录不启动/登录自动启动/入口位置/视图切换/旧关键词存储迁移/规则 CRUD/类别选择器 picker——输入过滤/点选回显/× 清除/类别徽章与标签/类别精确匹配——父分类不连带子分类、子分类单独命中/标题匹配/组合规则 AND 语义含三字段/单规则启停/行内编辑——展开回填/保存/取消/模式/总开关/标签切换）+ 运行流程的独立阶段验证存储损坏回退（刷新 → 预写坏 JSON → 注入 → 断言零报错且回退默认设置）。运行按 `tests/README.md` 通用注入模式。
+  - `tests/suites/rule-stress.js` + `tests/fixtures/rule-stress.json`：规则匹配语义压测——17 条真实组合规则（格式与脚本导出一致：高频标题词、大写形态、`C++` 特殊字符、英文标签小写、仅类别（父分类精确不连带子分类/子分类单独命中）、类别+标签/类别+标题/标签+标题/三字段 AND、永不命中词、enabled:false 停用规则）。核心是**影子匹配器**：测试独立实现一遍匹配逻辑，对每个帖子行算期望状态，与 data-lkcb-state/data-lkcb-match 逐行比对——信息流怎么变断言都成立；各规则真实命中行数仅 info 参考。分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=搞七捻三 Lv1）取自 2026-09 实测，站点改 ID 需同步。尚未在站点跑过（新增于 2026-09-09）。
+  - `tests/suites/bulk-stress.js` + `tests/fixtures/stress-keywords.txt`：97 个有意义的词（交易/广告/求职/技术词等真实屏蔽场景，含 `C++`、`.NET` 等特殊字符词与长句），测试将其转为仅标题规则后压测头像菜单视图，检查内部滚动、footer 可见、无横向溢出、滚动到底删除、过滤联动。与 rule-stress 的分工：本套件压 UI 承载，rule-stress 压匹配语义。
+  - `tests/suites/performance.js`：CLS（PerformanceObserver layout-shift）、隐藏延迟（行插入与 data-lkcb-state 出现的 MutationObserver 配对 + 确定性探针：克隆隐藏行剥掉标记插回，走真实观察器管线保证有样本；延迟含 Ember 骨架→文本填充时间，仅作参考——探针期 CLS≈0 才是「绘制前隐藏、无闪现」的权威证明）、长任务（注意：无脚本对照下站点自身也出现 ~3s 长任务，非脚本造成）、滚动风暴（12×1500px，合成 wheel 事件 + scrollBy——纯 scrollBy 不会触发该站加载器）、网络请求增量（Resource Timing，开头需 setResourceTimingBufferSize 扩容，默认 250 条会写满）。
+  - CSP 硬约束：脚本只允许 eval 一次，且必须在首个 await 之前的同步段执行——await 之后的定时器回调里 eval 会被站点 CSP（无 'unsafe-eval'）拦截。六套的注入点都已遵守此约束。
+  - `tests/suites/spa.js`：SPA 路由重建零闪现测试——真实点击「热门/最新」路由标签（`#navigation-bar`，不是侧边栏）触发 Ember 列表整体重建，页面不重载、脚本存活。验证：路由完成、重建列表中过滤照常生效、每次切换 CLS 增量 = 0（行未绘制即被隐藏的硬证据；隐藏延迟仅作参考，含骨架→文本填充时间）、零泄漏（命中标题规则却未隐藏的行数为 0）、零报错。「显示 N 个新话题」按钮场景（站点实时来新帖）不自动化：无法确定性触发，且底层插入管线与路由重建/perf 探针同源，已被等效覆盖。
+  - `tests/suites/narrow-screen.js`：窄屏深测。视口由外部流程预设为目标窄屏后刷新再运行；覆盖滑入抽屉视图（规则行数量/内部滚动/footer 可见/无横向溢出/视图在抽屉可视区内）、过滤、页面无横向溢出（历史：长词胶囊换行/截断的 content-box 溢出 bug 由 v2.2 加 `box-sizing: border-box` 修复）。自带 43 个长短中英混合词。**必须跑两遍**：桌面 UA（覆盖媒体查询类差异）+ 移动 UA（emulate 同时设 iPhone Safari userAgent，覆盖站点移动样式表差异——v2.3 的 justify-content bug 只有移动 UA 能复现）。390/768/320 桌面 UA 与 393/320 移动 UA 在 v2.4.1 基线全绿。
   - 未覆盖（用户明确无需或需人工）：导出下载、真实登出（已验证过一次）、真实 Tampermonkey 环境冒烟。
 - git 提交/推送需用户明确发话，不要自行操作。

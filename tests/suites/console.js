@@ -57,8 +57,8 @@
 // 【未覆盖——按用户要求或需真实环境/人工】
 //   存储损坏回退：由运行流程的独立阶段验证（刷新 → 预写坏 JSON → 注入 →
 //   断言零报错），不在本文件内做——页内二次 eval 会被站点 CSP 间歇性拦截；
-//   导出下载、真实登出/登录（用户明确无需测试）、SPA 路由往返（见 tests/spa-test.js）、
-//   窄屏（见 tests/narrow-screen-test.js）。v2.4 起脚本强制登录、悬浮面板与
+//   导出下载、真实登出/登录（用户明确无需测试）、SPA 路由往返（见 tests/suites/spa.js）、
+//   窄屏（见 tests/suites/narrow-screen.js）。脚本强制登录、悬浮面板与
 //   油猴菜单命令已移除，相关断言随之删除。
 //   类别精确匹配的父子用例取真实分类 ID（4 = 开发调优、20 = 其 Lv1 子分类），
 //   依赖本站 /site.json 异步树，站点改 ID 时需同步更新。
@@ -215,6 +215,11 @@
         return Promise.resolve();
       },
     };
+    // 真实页面可能已登录，而脚本 isLoggedIn 看的是整个 document 的 #current-user。
+    // 已登录时临时改掉真实头部的 id 模拟未登录；断言后恢复 id 即等效 SPA 登录
+    //（登录观察器只看 childList，恢复后追加一个注释节点触发它重新检查）
+    const realUserItem = document.getElementById('current-user');
+    if (realUserItem) realUserItem.id = 'current-user-lkcb-suspended';
     buildMock(false); // 未登录：脚本必须等到登录才启动
     (0, eval)(source);
     await sleep(400);
@@ -226,10 +231,15 @@
         mockStates().every((s) => !s),
       JSON.stringify(mockStates()),
     );
-    // 模拟 SPA 登录：头部出现 #current-user，脚本检测到后自动启动
-    document
-      .querySelector('#blocker-test-mock .header-buttons')
-      .insertAdjacentHTML('beforeend', '<li id="current-user"></li>');
+    // 模拟 SPA 登录：已登录环境恢复真实头部 id；登出环境往 mock 插入 #current-user
+    if (realUserItem) {
+      realUserItem.id = 'current-user';
+      document.body.appendChild(document.createComment('lkcb-login-probe'));
+    } else {
+      document
+        .querySelector('#blocker-test-mock .header-buttons')
+        .insertAdjacentHTML('beforeend', '<li id="current-user"></li>');
+    }
     await sleep(600);
     const entry = document.getElementById('lkcb-menu-entry');
     assert(
@@ -349,13 +359,14 @@
         sub.every((el) => el.textContent.includes('开发调优')),
       `${filteredItems.length}/${fullCount}`,
     );
-    // 点选「开发调优 Lv2」→ 输入框显示类别名、出现清除按钮
+    // 点选「开发调优, Lv2」→ 输入框显示类别名、出现清除按钮
+    //（site.json 的子分类 name 自带「父分类, 等级」逗号格式，实测 2026-09）
     const lv2 = sub.find((el) => el.textContent.includes('Lv2'));
     lv2.click();
     await sleep(100);
     assert(
       '类别选择器：点选后显示类别名、出现清除按钮',
-      pickerInput.value === '开发调优 Lv2' &&
+      pickerInput.value === '开发调优, Lv2' &&
         !formPicker().querySelector('.lkcb-cat-clear').hidden,
       pickerInput.value,
     );
@@ -542,12 +553,17 @@
     await sleep(200);
     editForm = firstRow().querySelector('.lkcb-rule-edit');
     editForm.querySelector('.lkcb-edit-title').value = '不该被保存';
+    // 真实输入会触发 input 事件（程序化赋值不触发，必须手动派发）
+    editForm
+      .querySelector('.lkcb-edit-title')
+      .dispatchEvent(new Event('input', { bubbles: true }));
     editForm.querySelector('.lkcb-cancel-edit').click();
     await sleep(200);
     assert(
-      '取消编辑：规则不变 + 表单收起',
+      '取消编辑：保持上次保存值并丢弃未保存输入 + 表单收起',
       viewChips().length === 1 &&
-        viewChips()[0].includes('another') &&
+        viewChips()[0].includes('改后的标题') &&
+        !viewChips()[0].includes('不该被保存') &&
         !firstRow().querySelector('.lkcb-rule-edit'),
       JSON.stringify(viewChips()),
     );

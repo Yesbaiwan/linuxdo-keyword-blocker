@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.4.0
+// @version      2.4.1
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -418,7 +418,7 @@
 #lkcb-quick-access .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #lkcb-quick-access .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); }
 #lkcb-quick-access .lkcb-cat-item.lkcb-cat-none { color: var(--primary-medium, #919191); }
-#lkcb-quick-access ul.lkcb-rules { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+#lkcb-quick-access ul.lkcb-rules { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 #lkcb-quick-access ul.lkcb-rules li { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; }
 #lkcb-quick-access ul.lkcb-rules li.lkcb-editing { border-color: var(--tertiary, #0088cc); }
 #lkcb-quick-access .lkcb-rule-line { display: flex; align-items: flex-start; gap: 6px; }

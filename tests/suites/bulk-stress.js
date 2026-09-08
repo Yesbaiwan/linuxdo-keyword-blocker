@@ -7,8 +7,11 @@
 //   1. MCP 连接的 Chrome 已登录 linux.do，页面已刷新（避免多实例）；
 //   2. 本地服务 node tests/serve.js 已启动；
 //   3. 按tests/README.md 的通用注入模式拉取并 eval 本文件；注入时同时把
-//      tests/stress-keywords.txt（纯逗号分隔）按逗号切分为
+//      tests/fixtures/stress-keywords.txt（纯逗号分隔）按逗号切分为
 //      window.__LKCB_STRESS_KEYWORDS__（≥50 个），测试将其转为仅标题规则。
+//      与 rule-stress 的分工：本套件压「海量仅标题规则」的 UI 承载（渲染/
+//      滚动/删除），规则匹配语义由 tests/suites/rule-stress.js 用真实组合
+//      规则验证。
 //
 // 【流程】海量规则依次压测：
 //   A. 头像菜单视图：打开头像菜单 → 屏蔽规则标签 → 渲染耗时 → 结构检查
