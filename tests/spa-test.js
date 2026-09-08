@@ -20,7 +20,7 @@
 //   1. 两次路由切换（/latest → /hot → /latest）均完成且新列表有行；
 //   2. 重建后的列表中被屏蔽行数 > 0（新列表里过滤照常生效）；
 //   3. 每次切换的 CLS 增量 ≈ 0 —— 行未绘制即被隐藏的硬证据（有闪现必产生位移）；
-//   4. 泄漏 = 0：标题/分类/标签/摘要命中关键词却无隐藏标记的行数；
+//   4. 泄漏 = 0：标题命中规则却无隐藏标记的行数；
 //   5. 隐藏延迟（行插入 → data-lkcb-state 出现）：信息项，只报告不判定——
 //      新行常以骨架先插入、文本后填充，延迟含文本填充时间，CLS 才是闪现的权威指标；
 //   6. 全程零 JS 错误。
@@ -39,7 +39,9 @@
   const STORE_KEY = 'linuxdo-keyword-blocker-settings';
   const source = window.__LKCB_SOURCE__;
   if (!source) {
-    console.error('[lkcb-spa] 缺少被测脚本源码：请先注入 window.__LKCB_SOURCE__。');
+    console.error(
+      '[lkcb-spa] 缺少被测脚本源码：请先注入 window.__LKCB_SOURCE__。',
+    );
     window.__lkcbSpaRunning = false;
     return;
   }
@@ -100,13 +102,13 @@
         localStorage.setItem(k, v);
         return Promise.resolve();
       },
-      registerMenuCommand: () => {},
     };
     window.__lkcbSpaStage = 'prep';
 
     const sampleTitle = (
-      document.querySelector('tr.topic-list-item a.title, tr.topic-list-item a[href^="/t/"]')
-        ?.textContent || ''
+      document.querySelector(
+        'tr.topic-list-item a.title, tr.topic-list-item a[href^="/t/"]',
+      )?.textContent || ''
     ).trim();
     const probeWord = sampleTitle.slice(0, 8);
     if (probeWord.length < 4) {
@@ -116,7 +118,15 @@
     // 探测词保证基线命中；高频字「的」保证重建出的新列表必有大量命中行
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ enabled: true, hideMode: 'hide', keywords: [probeWord, '的'] }),
+      JSON.stringify({
+        enabled: true,
+        hideMode: 'hide',
+        rules: [probeWord, '的'].map((k) => ({
+          category: null,
+          tag: '',
+          title: k,
+        })),
+      }),
     );
     window.__lkcbSpaStage = 'eval';
     (0, eval)(source);
@@ -161,9 +171,19 @@
     const r1 = await switchRoute('/hot');
     r1.route = '/latest → /hot';
     r1.rows = document.querySelectorAll('tr.topic-list-item').length;
-    r1.hidden = document.querySelectorAll('tr.topic-list-item[data-lkcb-state="hidden"]').length;
-    results.push({ name: '切换 /hot：路由完成且新列表有行', ok: r1.rows > 0, detail: 'rows=' + r1.rows });
-    results.push({ name: '切换 /hot：重建列表中被屏蔽行 > 0', ok: r1.hidden > 0, detail: 'hidden=' + r1.hidden });
+    r1.hidden = document.querySelectorAll(
+      'tr.topic-list-item[data-lkcb-state="hidden"]',
+    ).length;
+    results.push({
+      name: '切换 /hot：路由完成且新列表有行',
+      ok: r1.rows > 0,
+      detail: 'rows=' + r1.rows,
+    });
+    results.push({
+      name: '切换 /hot：重建列表中被屏蔽行 > 0',
+      ok: r1.hidden > 0,
+      detail: 'hidden=' + r1.hidden,
+    });
     info('切换 /hot：CLS 增量（0 = 绘制前隐藏，无闪现）', r1.clsDelta);
     info('切换 /hot：隐藏延迟样本数', r1.latencySamples);
 
@@ -172,9 +192,19 @@
     const r2 = await switchRoute('/latest');
     r2.route = '/hot → /latest';
     r2.rows = document.querySelectorAll('tr.topic-list-item').length;
-    r2.hidden = document.querySelectorAll('tr.topic-list-item[data-lkcb-state="hidden"]').length;
-    results.push({ name: '切换 /latest：路由完成且新列表有行', ok: r2.rows > 0, detail: 'rows=' + r2.rows });
-    results.push({ name: '切换 /latest：重建列表中被屏蔽行 > 0', ok: r2.hidden > 0, detail: 'hidden=' + r2.hidden });
+    r2.hidden = document.querySelectorAll(
+      'tr.topic-list-item[data-lkcb-state="hidden"]',
+    ).length;
+    results.push({
+      name: '切换 /latest：路由完成且新列表有行',
+      ok: r2.rows > 0,
+      detail: 'rows=' + r2.rows,
+    });
+    results.push({
+      name: '切换 /latest：重建列表中被屏蔽行 > 0',
+      ok: r2.hidden > 0,
+      detail: 'hidden=' + r2.hidden,
+    });
     info('切换 /latest：CLS 增量（0 = 绘制前隐藏，无闪现）', r2.clsDelta);
     info('切换 /latest：隐藏延迟样本数', r2.latencySamples);
 
@@ -185,38 +215,39 @@
       'hot=' + r1.clsDelta + ' latest=' + r2.clsDelta,
     );
 
-    // —— 泄漏检查：命中关键词却没被隐藏的行 ——
-    // 与脚本同口径取字段（标题/分类/标签/摘要），避免用整行 textContent 造成误报
+    // —— 泄漏检查：命中标题规则的行却没被隐藏 ——
+    // 与脚本同口径：仅标题字段包含匹配（本测试注入的均为仅标题规则）
     window.__lkcbSpaStage = 'leak-check';
-    const keywords = [probeWord, '的'].map((k) => k.toLowerCase());
+    const probes = [probeWord, '的'].map((k) => k.toLowerCase());
     const leakDetails = [];
     document.querySelectorAll('tr.topic-list-item').forEach((row) => {
-      const text = [
-        row.querySelector('.title, a.title, .raw-topic-link')?.textContent,
-        row.querySelector('.category-name')?.textContent,
-        ...[...row.querySelectorAll('.discourse-tag, .tag-wrapper')].map((t) => t.textContent),
-        row.querySelector('.topic-excerpt, .excerpt')?.textContent,
-      ]
-        .filter(Boolean)
-        .join(' ')
+      const title = (
+        row.querySelector('.title, a.title, .raw-topic-link')?.textContent || ''
+      )
+        .trim()
         .toLowerCase();
       if (
-        keywords.some((k) => text.includes(k)) &&
+        probes.some((k) => title.includes(k)) &&
         row.getAttribute('data-lkcb-state') !== 'hidden' &&
         leakDetails.length < 3
       ) {
-        leakDetails.push(
-          (row.querySelector('.title, a.title')?.textContent || '').trim().slice(0, 24),
-        );
+        leakDetails.push(title.slice(0, 24));
       }
     });
-    assert('零泄漏：命中关键词的行全部隐藏', leakDetails.length === 0, leakDetails.join(' | ') || 'leaks=0');
+    assert(
+      '零泄漏：命中标题规则的行全部隐藏',
+      leakDetails.length === 0,
+      leakDetails.join(' | ') || 'leaks=0',
+    );
 
     // —— 隐藏延迟汇总（信息项） ——
     const avg = latencies.length
       ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
       : null;
-    info('隐藏延迟 avg/max ms（样本数 ' + latencies.length + '）', avg + ' / ' + (latencies.length ? Math.max(...latencies) : '-'));
+    info(
+      '隐藏延迟 avg/max ms（样本数 ' + latencies.length + '）',
+      avg + ' / ' + (latencies.length ? Math.max(...latencies) : '-'),
+    );
 
     assert('全程零 JS 错误', pageErrors.length === 0, pageErrors.join('; '));
 
@@ -224,7 +255,11 @@
       probeWord,
       transitions: [r1, r2],
       clsTotal: +cls.total.toFixed(4),
-      hideLatencyMs: { count: latencies.length, avg, max: latencies.length ? Math.max(...latencies) : null },
+      hideLatencyMs: {
+        count: latencies.length,
+        avg,
+        max: latencies.length ? Math.max(...latencies) : null,
+      },
       leaks: leakDetails,
       assertions: results,
       pageErrors,
@@ -233,11 +268,21 @@
 
     const failed = results.filter((r) => !r.ok);
     console.log(
-      '%c[lkcb-spa] ' + (results.length - failed.length) + '/' + results.length + ' 通过',
+      '%c[lkcb-spa] ' +
+        (results.length - failed.length) +
+        '/' +
+        results.length +
+        ' 通过',
       'font-weight:bold;color:' + (failed.length ? 'red' : 'green'),
     );
     results.forEach((r, i) =>
-      console.log((r.ok ? '✅ ' : '❌ ') + i + '. ' + r.name + (r.ok ? '' : ' —— ' + r.detail)),
+      console.log(
+        (r.ok ? '✅ ' : '❌ ') +
+          i +
+          '. ' +
+          r.name +
+          (r.ok ? '' : ' —— ' + r.detail),
+      ),
     );
   } catch (e) {
     const msg = String((e && e.stack) || e).slice(0, 400);

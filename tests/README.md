@@ -5,7 +5,7 @@
 ## 一、环境前提
 
 1. chrome-devtools-mcp 已连接，浏览器为真实 Chrome；
-2. linux.do 已登录（测试假设登录态；未登录仅有 float panel 相关断言会失真）；
+2. linux.do 已登录（脚本强制登录：未登录时脚本完全不启动，所有断言零响应）；
 3. 优先用**无 Tampermonkey 的干净 profile**（被测脚本由我们注入；若浏览器里装着真实 Tampermonkey，会出现双实例，结果不可信）。扩展也越少越好——广告拦截类扩展会制造 `ERR_BLOCKED_BY_CLIENT` 控制台噪音，干扰第五节的错误归因；
 4. 本地服务已启动（见下）。
 
@@ -72,7 +72,7 @@ node tests/serve.js    # 监听 127.0.0.1:8123，服务根目录 = 项目根
 1. **真实控制台监控**：`list_console_messages` 按 `error` 类型过滤。页内的「零 JS 错误」断言只收集 `window.onerror`/`unhandledrejection`，控制台里被站点吞掉的错误只有这里能看到。**必须做归因**：站点自身有噪音——linux.do 自带的 gtm.js 会在 CSP 下产生 eval 拦截报错（调用栈在 gtm.js/chat 插件，与脚本无关），浏览器扩展也会产生 `ERR_BLOCKED_BY_CLIENT`。判定标准：错误栈里出现 `eval`、`<anonymous>` 且时间点对应我们的注入，或涉及 `lkcb` 相关代码才算脚本问题；站点级噪音记录并忽略。
 2. **真实网络请求清单**：`list_network_requests`——performance 的滚动风暴后应能看到对 `/latest.json` 等数据接口的真实请求（页内 Resource Timing 增量可与它交叉核对）；
 3. **真实性能追踪**：`performance_start_trace` / `performance_stop_trace`——获得 LCP/CLS/INP 的浏览器级 insight（比页内 PerformanceObserver 更全，含 Core Web Vitals 评分）；
-4. **渲染目检**：`take_screenshot`——面板/抽屉/胶囊布局的视觉确认（页内几何断言只量矩形，目检能发现颜色、遮挡类问题）；
+4. **渲染目检**：`take_screenshot`——面板/抽屉/规则行布局的视觉确认（页内几何断言只量矩形，目检能发现颜色、遮挡类问题）；
 5. **请求详情**：`get_network_request`——需要核对某个具体请求的响应体时使用。
 
 ## 六、清理

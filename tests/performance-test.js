@@ -116,7 +116,6 @@
         localStorage.setItem(k, v);
         return Promise.resolve();
       },
-      registerMenuCommand: () => {},
     };
     // Resource Timing 默认缓冲区只有 250 条，长会话早已写满会导致网络增量为 0
     performance.setResourceTimingBufferSize(2000);
@@ -138,10 +137,10 @@
       JSON.stringify({
         enabled: true,
         hideMode: 'hide',
-        // 两个关键词各司其职：探测词保证基线确定性命中；高频字「的」命中
+        // 两条仅标题规则各司其职：探测词保证基线确定性命中；高频字「的」命中
         // 风暴中新加载的绝大多数中文标题，压「大量行即时隐藏」的最坏情况，
         // 并让隐藏延迟（只有命中行才会打 data-lkcb-state）有样本可测
-        keywords: [probeWord, '的'],
+        rules: [probeWord, '的'].map((k) => ({ category: null, tag: '', title: k })),
       }),
     );
     window.__lkcbPerfStage = 'eval';
@@ -247,7 +246,6 @@
     console.error('[lkcb-perf] 异常中断 @', window.__lkcbPerfStage, e);
   } finally {
     // —— 清理：无论成败都还原存储与行状态 ——
-    document.getElementById('lkcb-float')?.remove();
     rowObs?.disconnect();
     attrObs?.disconnect();
     if (origStore === null) localStorage.removeItem(STORE_KEY);

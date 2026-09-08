@@ -12,39 +12,56 @@
 //
 // 【隔离性】全程使用独立 mock DOM 与临时存储，结束后自动清理并还原你的真实设置。
 //
-// 【覆盖的功能点】（按分组断言，共 20 项）
-//   ◆ 入口与视图切换（6 项）
-//      1. 菜单入口注入到头像菜单
-//      2. 入口位于「个人资料」正下方、样式同原生标签
-//      3. 点击入口 → 菜单内容区切换为关键词管理视图（原生内容隐藏）
-//      4. 点击 top-tabs 组原生标签 → 切回原生视图（回归：8 个标签分属两组容器）
-//      5. 重新点击入口 → 管理视图再次激活
-//      6. 菜单关闭（面板销毁）→ 重开回到原生默认视图、入口重新注入、旧 DOM 标记消失
-//   ◆ 关键词数据（4 项）
-//      7. 读取设置时规范化：trim / 去重 / 滤空（大小写变体按原样保留）
-//      8. UI 批量添加：全角/半角逗号分隔、去重、trim
-//      9. × 删除单个关键词
-//      10. 空白输入不添加
-//   ◆ 过滤算法（5 项）
-//      11. 标题命中隐藏，大小写归一化（关键词大写、页面标题小写）
-//      12. 置顶帖标题命中隐藏（回归：空置顶切换按钮不影响标题提取）
-//      13. 淡化模式生效
-//      14. 关闭屏蔽清空所有行状态
-//      15. 重新开启后恢复隐藏
-//   ◆ 悬浮面板（油猴菜单命令触发，不依赖头像菜单；4 项）
-//      16. 菜单命令弹出独立悬浮面板（登录态下同样直接弹出）
-//      17. 悬浮面板与菜单视图渲染同一份关键词数据
-//      18. 点击面板外关闭
-//      19. × 关闭
-//   ◆ 健壮性（1 项）
-//      20. 全程零 JS 错误（error / unhandledrejection / console.error 三路收集）
+// 【覆盖的功能点】（按分组断言，共 33 项）
+//   ◆ 登录门槛与入口（5 项）
+//      1. 未登录（无 #current-user）不启动：无入口、不过滤
+//      2. 登录后（头部出现 #current-user）自动启动：入口注入 + 迁移规则生效
+//      3. 入口位于「个人资料」正下方、样式同原生标签
+//      4. 点击入口 → 菜单内容区切换为规则管理视图（原生内容隐藏）
+//      5. 点击 top-tabs 组原生标签 → 切回原生视图（回归：8 个标签分属两组容器）
+//   ◆ 规则数据（5 项）
+//      6. 旧版关键词存储自动迁移为仅标题规则 + 规范化（trim/去重/滤空）
+//      7. UI 添加组合规则（类别+标签+标题，行文本含类别名）
+//      8. × 删除单条规则
+//      9. 三项全空不添加（至少填一项）
+//      10. 清空全部规则并还原行状态
+//   ◆ 类别选择器（3 项）
+//      11. 输入即过滤下拉项（自带搜索，无独立搜索框）
+//      12. 点选后输入框显示类别名、出现清除按钮
+//      13. × 清除恢复未选状态
+//   ◆ 匹配算法（12 项）
+//      14. 标题规则命中隐藏，大小写归一化（规则大写、页面标题小写）
+//      15. 置顶帖标题命中隐藏（回归：空置顶切换按钮不影响标题提取）
+//      16. 类别规则按 data-category-id 命中（不是按类别名文字）
+//      17. 类别精确匹配：父分类规则命中本分类行，不连带子分类行
+//      18. 类别精确匹配：子分类规则只命中该子分类行
+//      19. 标签规则按 discourse-tag 文本包含命中
+//      20. 组合规则 AND 语义：仅标签命中不隐藏
+//      21. 组合规则 AND 语义：标签+标题都命中才隐藏
+//      22. 组合规则 AND 语义：类别+标签+标题三字段全命中才隐藏
+//      23. 淡化模式生效
+//      24. 关闭屏蔽清空所有行状态
+//      25. 重新开启后恢复隐藏
+//   ◆ 单规则启停（2 项）
+//      26. 停用单条规则：总开关开着也不生效（勾选态同步）
+//      27. 重新启用单条规则：恢复生效
+//   ◆ 行内编辑（3 项）
+//      28. 展开编辑表单：类别 picker 显示类别名 + 标签标题原值回填
+//      29. 保存修改：原位替换 + 表单收起
+//      30. 取消编辑：规则不变 + 表单收起
+//   ◆ 健壮性（3 项）
+//      31. 菜单关闭（面板销毁）→ 重开回到原生默认视图、入口重新注入
+//      32. 重新激活管理视图（回归：入口在销毁重建后再次可用）
+//      33. 全程零 JS 错误（error / unhandledrejection 两路收集）
 //
 // 【未覆盖——按用户要求或需真实环境/人工】
 //   存储损坏回退：由运行流程的独立阶段验证（刷新 → 预写坏 JSON → 注入 →
 //   断言零报错），不在本文件内做——页内二次 eval 会被站点 CSP 间歇性拦截；
-//   导出下载、真实登出（用户明确无需测试）；
-//   SPA 路由往返（见 tests/spa-test.js）、窄屏（见 tests/narrow-screen-test.js）、
-//   Tampermonkey 真实菜单命令注册。
+//   导出下载、真实登出/登录（用户明确无需测试）、SPA 路由往返（见 tests/spa-test.js）、
+//   窄屏（见 tests/narrow-screen-test.js）。v2.4 起脚本强制登录、悬浮面板与
+//   油猴菜单命令已移除，相关断言随之删除。
+//   类别精确匹配的父子用例取真实分类 ID（4 = 开发调优、20 = 其 Lv1 子分类），
+//   依赖本站 /site.json 异步树，站点改 ID 时需同步更新。
 // ============================================================================
 
 (async function () {
@@ -81,13 +98,16 @@
     else failures.push(name);
   }
 
-  // mock DOM：仿 linux.do 头像菜单（含 top/bottom 两组标签）与话题表格。
+  // mock DOM：仿 linux.do 头像菜单（含 top/bottom 两组标签）、话题表格与头部。
+  // 行内带类别徽章（data-category-id）与标签（discourse-tag）。
   // 移除旧实例再新建，模拟「菜单关闭销毁、打开重渲染」的真实行为。
-  function buildMock() {
+  // loggedIn=false 时不渲染 #current-user，模拟未登录（脚本应等待登录）
+  function buildMock(loggedIn = true) {
     document.getElementById('blocker-test-mock')?.remove();
     const mock = document.createElement('div');
     mock.id = 'blocker-test-mock';
     mock.innerHTML = `
+      <div class="d-header"><ul class="header-buttons">${loggedIn ? '<li id="current-user" class="header-dropdown-toggle"></li>' : ''}</ul></div>
       <div class="user-menu-dropdown-wrapper">
         <div class="user-menu revamped menu-panel drop-down">
           <div class="panel-body">
@@ -108,10 +128,32 @@
       <table><tbody>
         <tr class="topic-list-item pinned">
           <td><div class="main-link"><a class="topic-status --pinned pin-toggle-button" href="#"></a><a class="title raw-link raw-topic-link" href="/t/topic/4">置顶帖标题含红包</a></div></td>
+          <td><a class="discourse-tag" href="/tag/纯水">纯水</a></td>
+          <td><span class="badge-category" data-category-id="11"><span class="badge-category__name">搞七捻三</span></span></td>
         </tr>
-        <tr class="topic-list-item"><td><a class="title" href="/t/topic/1">标题包含夸克的帖子</a></td></tr>
-        <tr class="topic-list-item"><td><a class="title" href="/t/topic/2">astro 小写命中大写关键词</a></td></tr>
-        <tr class="topic-list-item"><td><a class="title" href="/t/topic/3">完全正常的帖子</a></td></tr>
+        <tr class="topic-list-item">
+          <td><a class="title" href="/t/topic/1">标题包含夸克的帖子</a></td>
+          <td><a class="discourse-tag" href="/tag/人工智能">人工智能</a></td>
+          <td><span class="badge-category" data-category-id="4"><span class="badge-category__name">开发调优</span></span></td>
+        </tr>
+        <tr class="topic-list-item">
+          <td><a class="title" href="/t/topic/2">astro 小写命中大写关键词</a></td>
+          <td><a class="discourse-tag" href="/tag/纯水">纯水</a></td>
+          <td><span class="badge-category" data-category-id="4"><span class="badge-category__name">开发调优</span></span></td>
+        </tr>
+        <tr class="topic-list-item">
+          <td><a class="title" href="/t/topic/3">完全正常的帖子</a></td>
+          <td><span class="badge-category" data-category-id="11"><span class="badge-category__name">搞七捻三</span></span></td>
+        </tr>
+        <tr class="topic-list-item">
+          <td><a class="title" href="/t/topic/5">another 完全正常帖</a></td>
+          <td><a class="discourse-tag" href="/tag/人工智能">人工智能</a></td>
+          <td><span class="badge-category" data-category-id="4"><span class="badge-category__name">开发调优</span></span></td>
+        </tr>
+        <tr class="topic-list-item">
+          <td><a class="title" href="/t/topic/6">子分类专属帖</a></td>
+          <td><span class="badge-category" data-category-id="20"><span class="badge-category__name">开发调优 Lv1</span></span></td>
+        </tr>
       </tbody></table>`;
     document.body.appendChild(mock);
     return mock;
@@ -123,210 +165,459 @@
   const viewChips = () =>
     [
       ...document.querySelectorAll(
-        '.panel-body-contents #lkcb-quick-access ul.lkcb-keywords li span',
+        '.panel-body-contents #lkcb-quick-access ul.lkcb-rules li span',
       ),
     ].map((s) => s.textContent);
 
+  // UI 助手：操作添加表单的类别 picker、填标签标题并点击添加
+  // categoryId 为空 = 选「不按类别筛选」（点清除按钮）
+  async function addRuleViaUI(categoryId, tag, title) {
+    const view = document.querySelector(
+      '.panel-body-contents #lkcb-quick-access',
+    );
+    const picker = view.querySelector('#lkcb-form-cat .lkcb-cat-picker');
+    const input = picker.querySelector('.lkcb-cat-input');
+    if (categoryId) {
+      input.focus(); // 打开全量下拉
+      await sleep(50);
+      picker.querySelector(`.lkcb-cat-item[data-id="${categoryId}"]`).click();
+      await sleep(50);
+    } else {
+      picker.querySelector('.lkcb-cat-clear').click();
+    }
+    view.querySelector('#lkcb-rule-tag').value = tag || '';
+    view.querySelector('#lkcb-rule-title').value = title || '';
+    view.querySelector('#lkcb-add').click();
+    await sleep(200);
+  }
+
+  // 添加表单的类别 picker（树就绪探测与 picker 断言共用）
+  const formPicker = () =>
+    document.querySelector(
+      '.panel-body-contents #lkcb-form-cat .lkcb-cat-picker',
+    );
+
   // 主流程：任何一步抛错都中断并报告（finally 里完成清理与输出）
   try {
-  // —— 准备：非规范关键词存储 + 注入（单实例） ——
-  localStorage.setItem(
-    STORE_KEY,
-    JSON.stringify({
-      enabled: true,
-      hideMode: 'hide',
-      keywords: ['  夸克  ', '夸克', '', 'ASTRO', '红包'],
-    }),
-  );
-  window.__menuCommands = [];
-  window.GM = {
-    getValue: (k, d) => Promise.resolve(localStorage.getItem(k) ?? d),
-    setValue: (k, v) => {
-      localStorage.setItem(k, v);
-      return Promise.resolve();
-    },
-    registerMenuCommand: (label, cb) => window.__menuCommands.push(cb),
-  };
-  buildMock();
-  (0, eval)(source);
-  await sleep(400);
+    // —— 准备：旧版关键词格式存储（验证迁移）+ 注入（单实例） ——
+    localStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({
+        enabled: true,
+        hideMode: 'hide',
+        keywords: ['  夸克  ', '夸克', '', 'ASTRO', '红包'],
+      }),
+    );
+    window.GM = {
+      getValue: (k, d) => Promise.resolve(localStorage.getItem(k) ?? d),
+      setValue: (k, v) => {
+        localStorage.setItem(k, v);
+        return Promise.resolve();
+      },
+    };
+    buildMock(false); // 未登录：脚本必须等到登录才启动
+    (0, eval)(source);
+    await sleep(400);
 
-  // ◆ 入口与视图切换
-  const entry = document.getElementById('lkcb-menu-entry');
-  assert('入口注入到头像菜单', !!entry);
-  assert(
-    '入口位于「个人资料」正下方',
-    !!entry &&
-      document.getElementById('user-menu-button-profile').nextElementSibling ===
-        entry,
-  );
+    // ◆ 登录门槛与入口
+    assert(
+      '未登录不启动：无入口、不过滤',
+      !document.getElementById('lkcb-menu-entry') &&
+        mockStates().every((s) => !s),
+      JSON.stringify(mockStates()),
+    );
+    // 模拟 SPA 登录：头部出现 #current-user，脚本检测到后自动启动
+    document
+      .querySelector('#blocker-test-mock .header-buttons')
+      .insertAdjacentHTML('beforeend', '<li id="current-user"></li>');
+    await sleep(600);
+    const entry = document.getElementById('lkcb-menu-entry');
+    assert(
+      '登录后自动启动：入口注入 + 迁移规则立即生效',
+      !!entry &&
+        mockStates()[0] === 'hidden' &&
+        mockStates()[1] === 'hidden' &&
+        mockStates()[2] === 'hidden',
+      JSON.stringify(mockStates()),
+    );
+    assert(
+      '入口位于「个人资料」正下方',
+      !!entry &&
+        document.getElementById('user-menu-button-profile')
+          .nextElementSibling === entry,
+    );
 
-  entry.click();
-  await sleep(300);
-  assert(
-    '点击入口激活管理视图（原生内容隐藏）',
-    document.querySelector('.panel-body-contents')?.dataset.lkcbView ===
-      'keywords' &&
-      (() => {
-        const qa = document.querySelector(
-          '.panel-body-contents .quick-access-panel:not(#lkcb-quick-access)',
-        );
-        return qa ? getComputedStyle(qa).display === 'none' : null;
-      })(),
-  );
+    entry.click();
+    await sleep(300);
+    assert(
+      '点击入口激活管理视图（原生内容隐藏）',
+      document.querySelector('.panel-body-contents')?.dataset.lkcbView ===
+        'rules' &&
+        (() => {
+          const qa = document.querySelector(
+            '.panel-body-contents .quick-access-panel:not(#lkcb-quick-access)',
+          );
+          return qa ? getComputedStyle(qa).display === 'none' : null;
+        })(),
+    );
 
-  document.getElementById('user-menu-button-replies').click();
-  await sleep(200);
-  assert(
-    '点击 top-tabs 原生标签切回原生视图',
-    !document
-      .querySelector('.panel-body-contents')
-      .hasAttribute('data-lkcb-view') &&
-      !entry.classList.contains('active'),
-  );
-
-  entry.click();
-  await sleep(200);
-  assert(
-    '重新点击入口再次激活管理视图',
-    document.querySelector('.panel-body-contents')?.dataset.lkcbView ===
-      'keywords',
-  );
-
-  // ◆ 关键词数据
-  const chips1 = viewChips();
-  assert(
-    '读取设置时规范化（trim/去重/滤空）',
-    JSON.stringify(chips1) === JSON.stringify(['夸克', 'ASTRO', '红包']),
-    JSON.stringify(chips1),
-  );
-
-  const input = document.getElementById('lkcb-input');
-  input.value = '新词，新词, ';
-  document.getElementById('lkcb-add').click();
-  await sleep(200);
-  const chips2 = viewChips();
-  assert(
-    'UI 批量添加（全角半角逗号/去重/trim）',
-    chips2.filter((k) => k === '新词').length === 1 && chips2.length === 4,
-    JSON.stringify(chips2),
-  );
-  document
-    .querySelector('.panel-body-contents #lkcb-quick-access ul.lkcb-keywords li:last-child button')
-    .click();
-  await sleep(200);
-  assert('× 删除关键词', viewChips().length === 3, JSON.stringify(viewChips()));
-
-  input.value = '   ';
-  document.getElementById('lkcb-add').click();
-  await sleep(200);
-  assert('空白输入不添加', viewChips().length === 3, JSON.stringify(viewChips()));
-
-  // ◆ 过滤算法
-  let st = mockStates();
-  assert(
-    '标题命中隐藏（大小写归一化）',
-    st[1] === 'hidden' && st[2] === 'hidden' && !st[3],
-    JSON.stringify(st),
-  );
-  assert(
-    '置顶帖标题命中隐藏（回归：空置顶按钮不影响标题提取）',
-    st[0] === 'hidden',
-    JSON.stringify(st),
-  );
-
-  const sel = document.getElementById('lkcb-hideMode');
-  sel.value = 'dim';
-  sel.dispatchEvent(new Event('change', { bubbles: true }));
-  await sleep(200);
-  st = mockStates();
-  assert('淡化模式生效', st[0] === 'dimmed' && st[1] === 'dimmed' && st[2] === 'dimmed', JSON.stringify(st));
-  sel.value = 'hide';
-  sel.dispatchEvent(new Event('change', { bubbles: true }));
-  await sleep(200);
-
-  document.getElementById('lkcb-enabled').click();
-  await sleep(200);
-  assert('关闭屏蔽清空所有行状态', mockStates().every((s) => !s), JSON.stringify(mockStates()));
-  document.getElementById('lkcb-enabled').click();
-  await sleep(200);
-  assert(
-    '重新开启后恢复隐藏',
-    mockStates()[0] === 'hidden' && mockStates()[1] === 'hidden' && mockStates()[2] === 'hidden',
-  );
-
-  // ◆ 悬浮面板
-  window.__menuCommands[0]();
-  await sleep(200);
-  const float = document.getElementById('lkcb-float');
-  assert(
-    '油猴菜单命令弹出悬浮面板',
-    !!float && getComputedStyle(float).display !== 'none',
-  );
-  assert(
-    '悬浮面板渲染同一份关键词数据',
-    float ? float.querySelectorAll('#lkcb-keywords li').length === 3 : false,
-  );
-  document.body.click();
-  await sleep(200);
-  assert('点击面板外关闭悬浮面板', !document.getElementById('lkcb-float'));
-
-  // 再开一次，验证 × 关闭
-  window.__menuCommands[0]();
-  await sleep(200);
-  document.getElementById('lkcb-float-close').click();
-  await sleep(200);
-  assert('× 关闭悬浮面板', !document.getElementById('lkcb-float'));
-
-  // ◆ 菜单关闭销毁 → 重开复位（DOM 标记法：旧节点上的标记应随销毁消失）
-  const oldWrapper = document.querySelector('.user-menu-dropdown-wrapper');
-  oldWrapper.setAttribute('data-test-mark', 'old-session');
-  oldWrapper.remove(); // 等效真实场景「关闭菜单：Discourse 销毁整个面板」
-  buildMock(); // 重开：Discourse 用全新 DOM 重渲染
-  await sleep(400);
-  assert(
-    '菜单关闭销毁后重开：入口重新注入、回到原生默认视图',
-    !!document.getElementById('lkcb-menu-entry') &&
+    document.getElementById('user-menu-button-replies').click();
+    await sleep(200);
+    assert(
+      '点击 top-tabs 原生标签切回原生视图',
       !document
         .querySelector('.panel-body-contents')
-        .hasAttribute('data-lkcb-view') &&
-      !document.querySelector('.panel-body-contents #lkcb-quick-access') &&
-      document
-        .querySelector('.user-menu-dropdown-wrapper')
-        .getAttribute('data-test-mark') === null,
-  );
+        .hasAttribute('data-lkcb-view') && !entry.classList.contains('active'),
+    );
 
-  // ◆ 健壮性：存储损坏回退已移至运行流程的独立阶段
-  // （刷新页面 → 预写坏 JSON → 注入 → 断言零报错；页内二次 eval 会被站点 CSP 间歇性拦截）
+    entry.click();
+    await sleep(200);
 
-  // 全程零 JS 错误
-  assert('全程零 JS 错误', pageErrors.length === 0, pageErrors.join('; '));
+    // ◆ 规则数据
+    // 等类别树异步就绪（/site.json 拉取：picker 下拉打开后出现「不按类别筛选」
+    // 以外的选项），否则类别规则的行文本会显示数字 ID 而非类别名
+    let treeReady = false;
+    for (let i = 0; i < 10 && !treeReady; i++) {
+      formPicker().querySelector('.lkcb-cat-input').focus();
+      await sleep(500);
+      treeReady =
+        formPicker().querySelectorAll(
+          '.lkcb-cat-item[data-id]:not([data-id=""])',
+        ).length > 0;
+      formPicker().querySelector('.lkcb-cat-input').blur();
+      await sleep(50);
+    }
+    const chips1 = viewChips();
+    assert(
+      '旧关键词存储迁移为仅标题规则并规范化（trim/去重/滤空）',
+      JSON.stringify(chips1) ===
+        JSON.stringify(['标题:夸克', '标题:ASTRO', '标题:红包']),
+      JSON.stringify(chips1),
+    );
 
+    await addRuleViaUI('11', '新标签 ', ' 新标题');
+    const chips2 = viewChips();
+    assert(
+      'UI 添加组合规则（trim + 类别展示名入行文本，有子分类的类别带「不带等级」后缀）',
+      chips2.length === 4 &&
+        chips2[3] === '类别:搞七捻三（不带等级） + 标签:新标签 + 标题:新标题',
+      JSON.stringify(chips2),
+    );
+
+    document
+      .querySelector(
+        '.panel-body-contents #lkcb-quick-access ul.lkcb-rules li:last-child button.lkcb-remove',
+      )
+      .click();
+    await sleep(200);
+    assert('× 删除规则', viewChips().length === 3, JSON.stringify(viewChips()));
+
+    await addRuleViaUI('', '   ', '');
+    assert(
+      '三项全空不添加',
+      viewChips().length === 3,
+      JSON.stringify(viewChips()),
+    );
+
+    document.getElementById('lkcb-clear').click();
+    await sleep(200);
+    assert(
+      '清空全部规则并还原行状态',
+      viewChips().length === 0 && mockStates().every((s) => !s),
+      JSON.stringify(mockStates()),
+    );
+
+    // ◆ 类别选择器（树此时已就绪，见前文等待循环）
+    const pickerInput = formPicker().querySelector('.lkcb-cat-input');
+    pickerInput.focus(); // 打开全量下拉
+    await sleep(100);
+    const fullCount = formPicker().querySelectorAll(
+      '.lkcb-cat-item[data-id]',
+    ).length;
+    pickerInput.value = '开发调优';
+    pickerInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(100);
+    const filteredItems = [
+      ...formPicker().querySelectorAll('.lkcb-cat-item[data-id]'),
+    ];
+    const sub = filteredItems.filter((el) => el.dataset.id !== '');
+    assert(
+      '类别选择器：输入即过滤下拉项',
+      fullCount > 1 &&
+        sub.length > 0 &&
+        sub.length < fullCount - 1 &&
+        sub.every((el) => el.textContent.includes('开发调优')),
+      `${filteredItems.length}/${fullCount}`,
+    );
+    // 点选「开发调优 Lv2」→ 输入框显示类别名、出现清除按钮
+    const lv2 = sub.find((el) => el.textContent.includes('Lv2'));
+    lv2.click();
+    await sleep(100);
+    assert(
+      '类别选择器：点选后显示类别名、出现清除按钮',
+      pickerInput.value === '开发调优 Lv2' &&
+        !formPicker().querySelector('.lkcb-cat-clear').hidden,
+      pickerInput.value,
+    );
+    formPicker().querySelector('.lkcb-cat-clear').click();
+    await sleep(100);
+    assert(
+      '类别选择器：× 清除恢复未选状态',
+      pickerInput.value === '' &&
+        formPicker().querySelector('.lkcb-cat-clear').hidden,
+      pickerInput.value,
+    );
+
+    // ◆ 匹配算法：先铺三条仅标题规则（迁移产物等价物）
+    await addRuleViaUI('', '', '夸克');
+    await addRuleViaUI('', '', 'ASTRO');
+    await addRuleViaUI('', '', '红包');
+    let st = mockStates();
+    assert(
+      '标题规则命中隐藏（大小写归一化）',
+      st[1] === 'hidden' && st[2] === 'hidden' && !st[3] && !st[4],
+      JSON.stringify(st),
+    );
+    assert(
+      '置顶帖标题命中隐藏（回归：空置顶按钮不影响标题提取）',
+      st[0] === 'hidden',
+      JSON.stringify(st),
+    );
+
+    // 类别规则：仅选类别（11 = 搞七捻三，徽章在 mock 行的 data-category-id 上）
+    await addRuleViaUI('11', '', '');
+    st = mockStates();
+    assert(
+      '类别规则按 data-category-id 命中',
+      st[3] === 'hidden',
+      JSON.stringify(st),
+    );
+
+    // 类别精确匹配：只认所选分类自身的徽章 ID。选父分类（4 = 开发调优）
+    // 只命中直接发在该分类下的帖子（不带等级），子分类（20 = 开发调优 Lv1）的
+    // 行不受影响；要屏蔽某一级就单独选那一级
+    await addRuleViaUI('4', '', '');
+    st = mockStates();
+    assert(
+      '类别精确匹配：父分类规则命中本分类行，不连带子分类行',
+      st[4] === 'hidden' && st[5] !== 'hidden',
+      JSON.stringify(st),
+    );
+    document
+      .querySelector(
+        '.panel-body-contents #lkcb-quick-access ul.lkcb-rules li:last-child button.lkcb-remove',
+      )
+      .click();
+    await sleep(200);
+    await addRuleViaUI('20', '', '');
+    st = mockStates();
+    assert(
+      '类别精确匹配：子分类规则只命中该子分类行',
+      st[5] === 'hidden' && st[4] !== 'hidden',
+      JSON.stringify(st),
+    );
+    document
+      .querySelector(
+        '.panel-body-contents #lkcb-quick-access ul.lkcb-rules li:last-child button.lkcb-remove',
+      )
+      .click();
+    await sleep(200);
+
+    // 标签规则：仅填标签
+    await addRuleViaUI('', '人工智能', '');
+    st = mockStates();
+    assert(
+      '标签规则按 discourse-tag 包含命中',
+      st[4] === 'hidden',
+      JSON.stringify(st),
+    );
+
+    // 组合规则 AND 语义：标签命中但标题不命中 → 不隐藏
+    document.getElementById('lkcb-clear').click();
+    await sleep(200);
+    await addRuleViaUI('', '人工智能', '不存在的标题词');
+    st = mockStates();
+    assert(
+      '组合规则 AND：仅标签命中不隐藏',
+      st.every((s) => !s),
+      JSON.stringify(st),
+    );
+    await addRuleViaUI('', '人工智能', 'another');
+    st = mockStates();
+    assert(
+      '组合规则 AND：标签+标题都命中才隐藏',
+      st[4] === 'hidden' && st[1] !== 'hidden',
+      JSON.stringify(st),
+    );
+
+    // 三字段 AND（如「福利羊毛 + 高级推广 + 标题词」场景）：任一字段不命中不隐藏
+    document.getElementById('lkcb-clear').click();
+    await sleep(200);
+    await addRuleViaUI('4', '人工智能', 'another');
+    st = mockStates();
+    assert(
+      '组合规则 AND：类别+标签+标题全命中才隐藏',
+      st[4] === 'hidden' && st[1] !== 'hidden' && st[2] !== 'hidden',
+      JSON.stringify(st),
+    );
+
+    // ◆ 处理模式与开关
+    const sel = document.getElementById('lkcb-hideMode');
+    sel.value = 'dim';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(200);
+    st = mockStates();
+    assert('淡化模式生效', st[4] === 'dimmed', JSON.stringify(st));
+    sel.value = 'hide';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(200);
+
+    document.getElementById('lkcb-enabled').click();
+    await sleep(200);
+    assert(
+      '关闭屏蔽清空所有行状态',
+      mockStates().every((s) => !s),
+      JSON.stringify(mockStates()),
+    );
+    document.getElementById('lkcb-enabled').click();
+    await sleep(200);
+    assert(
+      '重新开启后恢复隐藏',
+      mockStates()[4] === 'hidden',
+      JSON.stringify(mockStates()),
+    );
+
+    // ◆ 单规则启停：总开关打开时，停用的规则不参与匹配
+    const firstRuleCheck = () =>
+      document.querySelector(
+        '.panel-body-contents #lkcb-rules li input[type="checkbox"]',
+      );
+    firstRuleCheck().click();
+    await sleep(200);
+    st = mockStates();
+    assert(
+      '单规则停用：总开关开着也不生效（勾选态同步）',
+      st.every((s) => !s) && !firstRuleCheck().checked,
+      JSON.stringify(st),
+    );
+    firstRuleCheck().click();
+    await sleep(200);
+    st = mockStates();
+    assert(
+      '单规则重新启用：恢复生效',
+      st[4] === 'hidden' && firstRuleCheck().checked,
+      JSON.stringify(st),
+    );
+
+    // ◆ 行内编辑：原行下方展开与添加同款表单，原位保存/取消
+    const firstRow = () =>
+      document.querySelector('.panel-body-contents #lkcb-rules li');
+    firstRow().querySelector('button.lkcb-edit').click();
+    await sleep(200);
+    let editForm = firstRow().querySelector('.lkcb-rule-edit');
+    assert(
+      '行内编辑展开：类别 picker 显示类别名 + 标签标题原值回填',
+      !!editForm &&
+        editForm.querySelector('.lkcb-cat-input').value ===
+          '开发调优（不带等级）' &&
+        editForm.querySelector('.lkcb-edit-tag').value === '人工智能' &&
+        editForm.querySelector('.lkcb-edit-title').value === 'another',
+      JSON.stringify({
+        cat: editForm?.querySelector('.lkcb-cat-input')?.value,
+        tag: editForm?.querySelector('.lkcb-edit-tag')?.value,
+        title: editForm?.querySelector('.lkcb-edit-title')?.value,
+      }),
+    );
+    editForm.querySelector('.lkcb-edit-title').value = '改后的标题';
+    editForm.querySelector('.lkcb-save').click();
+    await sleep(200);
+    assert(
+      '保存修改：原位替换 + 表单收起',
+      viewChips().length === 1 &&
+        viewChips()[0].includes('改后的标题') &&
+        !firstRow().querySelector('.lkcb-rule-edit'),
+      JSON.stringify(viewChips()),
+    );
+    firstRow().querySelector('button.lkcb-edit').click();
+    await sleep(200);
+    editForm = firstRow().querySelector('.lkcb-rule-edit');
+    editForm.querySelector('.lkcb-edit-title').value = '不该被保存';
+    editForm.querySelector('.lkcb-cancel-edit').click();
+    await sleep(200);
+    assert(
+      '取消编辑：规则不变 + 表单收起',
+      viewChips().length === 1 &&
+        viewChips()[0].includes('another') &&
+        !firstRow().querySelector('.lkcb-rule-edit'),
+      JSON.stringify(viewChips()),
+    );
+
+    // ◆ 菜单关闭销毁 → 重开复位（DOM 标记法：旧节点上的标记应随销毁消失）
+    const oldWrapper = document.querySelector('.user-menu-dropdown-wrapper');
+    oldWrapper.setAttribute('data-test-mark', 'old-session');
+    oldWrapper.remove(); // 等效真实场景「关闭菜单：Discourse 销毁整个面板」
+    buildMock(); // 重开：Discourse 用全新 DOM 重渲染
+    await sleep(400);
+    assert(
+      '菜单关闭销毁后重开：入口重新注入、回到原生默认视图',
+      !!document.getElementById('lkcb-menu-entry') &&
+        !document
+          .querySelector('.panel-body-contents')
+          .hasAttribute('data-lkcb-view') &&
+        !document.querySelector('.panel-body-contents #lkcb-quick-access') &&
+        document
+          .querySelector('.user-menu-dropdown-wrapper')
+          .getAttribute('data-test-mark') === null,
+    );
+
+    // 重新激活管理视图（销毁重建后的入口仍可用）
+    document.getElementById('lkcb-menu-entry').click();
+    await sleep(200);
+    assert(
+      '重新点击入口再次激活管理视图',
+      document.querySelector('.panel-body-contents')?.dataset.lkcbView ===
+        'rules',
+    );
+
+    // ◆ 健壮性：存储损坏回退已移至运行流程的独立阶段
+    // （刷新页面 → 预写坏 JSON → 注入 → 断言零报错；页内二次 eval 会被站点 CSP 间歇性拦截）
+
+    // 全程零 JS 错误
+    assert('全程零 JS 错误', pageErrors.length === 0, pageErrors.join('; '));
   } catch (e) {
     const msg = String((e && e.stack) || e).slice(0, 400);
     failures.push('异常中断: ' + msg);
-    results.push({ name: '异常中断（后续断言未执行）', ok: false, detail: msg });
+    results.push({
+      name: '异常中断（后续断言未执行）',
+      ok: false,
+      detail: msg,
+    });
     console.error('[lkcb-test] 测试异常中断:', e);
   } finally {
-  // —— 清理 ——
-  document.getElementById('blocker-test-mock')?.remove();
-  document.getElementById('lkcb-float')?.remove();
-  if (origStore === null) localStorage.removeItem(STORE_KEY);
-  else localStorage.setItem(STORE_KEY, origStore);
+    // —— 清理 ——
+    document.getElementById('blocker-test-mock')?.remove();
+    if (origStore === null) localStorage.removeItem(STORE_KEY);
+    else localStorage.setItem(STORE_KEY, origStore);
 
-  // —— 输出 ——
-  console.log(
-    '%c[lkcb-test] ' + passed + '/' + results.length + ' 通过',
-    'font-weight:bold;color:' + (failures.length ? 'red' : 'green'),
-  );
-  results.forEach((r, i) =>
+    // —— 输出 ——
     console.log(
-      (r.ok ? '✅ ' : '❌ ') + (i + 1) + '. ' + r.name + (r.ok ? '' : ' —— ' + r.detail),
-    ),
-  );
-  if (failures.length === 0)
-    console.log('全部通过。mock DOM 与存储已清理；刷新页面即可恢复干净状态。');
-  window.__lkcbTestResults = results;
-  window.__lkcbTestsRunning = false;
+      '%c[lkcb-test] ' + passed + '/' + results.length + ' 通过',
+      'font-weight:bold;color:' + (failures.length ? 'red' : 'green'),
+    );
+    results.forEach((r, i) =>
+      console.log(
+        (r.ok ? '✅ ' : '❌ ') +
+          (i + 1) +
+          '. ' +
+          r.name +
+          (r.ok ? '' : ' —— ' + r.detail),
+      ),
+    );
+    if (failures.length === 0)
+      console.log(
+        '全部通过。mock DOM 与存储已清理；刷新页面即可恢复干净状态。',
+      );
+    window.__lkcbTestResults = results;
+    window.__lkcbTestsRunning = false;
   }
 })();
