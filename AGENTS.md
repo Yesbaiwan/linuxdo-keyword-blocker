@@ -2,45 +2,43 @@
 
 ## 项目
 
-Linux.do Keyword Blocker — 单文件 Tampermonkey 用户脚本（`ld-blocker.user.js`），用「类别/标签/标题」规则自动隐藏/淡化 linux.do 的帖子。无构建、无依赖、纯 DOM API；文件直接装入 Tampermonkey。UI 文案使用简体中文。
+Linux.do Keyword Blocker — 单文件 Tampermonkey 用户脚本（`ld-blocker.user.js`），用「类别/标签/标题」规则自动隐藏/淡化 linux.do 帖子。无构建、无依赖、纯 DOM API，UI 文案简体中文。
 
-## 用户需求（当前产品形态，2.4.1）
+## 产品行为
 
-- 强制登录使用：未登录（头部无 `#current-user`，Discourse 登录后才渲染）时脚本不启动——不过滤、不注入任何 UI；登录后（含 SPA 登录，观察器检测到 `#current-user` 出现）自动启动。悬浮面板与油猴菜单命令已移除。
-- 登录入口：头像下拉菜单标签列最底部（「个人资料」下方）的「屏蔽规则」标签按钮，样式与原生标签一致；点击后菜单内容区切换为规则管理视图。
-- 功能：启用总开关、规则管理（每条规则 = 类别选择器 + 标签输入 + 标题输入，至少填一项）、单规则独立启停（勾选框，与总开关同时打开才生效，停用规则画删除线）、行内编辑（点「编辑」在该行下方展开与添加同款的表单，保存/取消都在本行完成，不回填顶部表单）、可搜索类别选择器（picker：输入即过滤下拉、点选/回车即选中、× 清除已选、失焦未选择则恢复原值——搜索词永远是临时的，只有显式点选才改变选中结果）、隐藏/淡化两模式（默认淡化显示——帖子变暗但还在信息流里，误屏蔽可见可改；存过设置的用户保持自己的选择）、× 删除、导出（JSON）、清空。刻意不设独立搜索框、不做已添加规则的搜索（用户明确要求）。
-- 匹配逻辑：规则内已填字段**全部命中**才算命中（AND），任一规则命中即处理该行；类别按 `span.badge-category[data-category-id]` 数字**精确匹配所选分类本身**——行徽章只带话题自身分类 ID，选父分类 = 只屏蔽不带等级、直接发在该分类下的帖子，**不连带子分类**；要屏蔽某一级（Lv1/Lv2/Lv3）就在下拉里单独选那一级。刻意不做「父分类连带全部子分类」：整类屏蔽交给 Discourse 自带的分类静音，且大范围屏蔽会让信息流大量消失、站点不停加载新帖甚至触发限流（用户明确要求）。标签按 `a.discourse-tag` 文字包含、标题按标题链接文字包含，大小写不敏感。
-- 存储结构：`{ enabled, rules: [{category, tag, title, enabled}], hideMode }`（外层 enabled = 总开关，规则内 enabled = 单条开关，缺省视为启用，旧数据无需迁移）；旧版 `keywords` 数组在读取时自动迁移为仅标题规则。
-- 类别树：完全运行时拉取 `/site.json`（GM 存储缓存 7 天，缓存带版本号 `v`，读取时逐条校验 id/name/parent 字段，不合法直接作废重拉——旧版脚本写入的残缺缓存曾把下拉缩进搞乱），成功后重算匹配并重渲染打开中的视图；失败时下拉仅剩「不按类别筛选」，无法新增类别规则，已存的类别规则仍按徽章 ID 精确匹配生效。登录态实测（2026-09-08）：69 个分类、17 个顶级、0 孤儿；每个大类基本都直接挂 Lv1/Lv2/Lv3 三个子分类，**唯一真正的二级嵌套是「资源荟萃 → 网盘资源 → 网盘资源 Lv1-3」**（旧记录「Lv2 挂 Lv1 下」有误，但不影响——下拉必须递归遍历，只列一层会丢项）。下拉与规则行文本对有子分类的分类统一显示「（不带等级）」后缀。子分类页面（如 /c/develop/develop-lv1/20）行内完全没有类别徽章，类别规则在该场景天然不命中（站点限制）。
+- 强制登录：头部有 `#current-user` 才启动；未登录不过滤、无任何 UI；SPA 登录后由观察器自动启动。
+- 入口：头像菜单标签列最底部的「屏蔽规则」按钮，点击后菜单内容区切换为规则管理视图。
+- 功能：总开关；规则 = 类别选择器 + 标签 + 标题（至少填一项）；单规则启停勾选框（停用画删除线）；行内编辑（在本行下方展开表单，保存/取消都在本行完成，不回填顶部表单）；可搜索类别 picker（输入即过滤、点选/回车选中、× 清除、失焦恢复原值）；隐藏/淡化两模式（默认淡化）；× 删除、导出 JSON、清空。刻意不做已添加规则的搜索（用户明确要求）。
+- 匹配：规则内已填字段**全部命中**（AND），任一规则命中即处理该行。类别按徽章 `data-category-id` 数字精确匹配所选分类本身，**不连带子分类**（整类屏蔽用 Discourse 自带分类静音）；标签按 `a.discourse-tag` 文字精确匹配（子串不命中）；标题包含匹配；均大小写不敏感。
+- 存储：`{ enabled, rules: [{category, tag, title, enabled}], hideMode }`；旧 `keywords` 数组读取时自动迁移为仅标题规则。
+- 类别树：运行时拉 `/site.json`，GM 缓存 7 天，带版本号并逐条校验格式；失败时空索引，已存类别规则仍按徽章 ID 生效。有子分类的分类统一显示「（不带等级）」后缀。子分类页（如 /c/develop/develop-lv1/20）行内无徽章，类别规则天然不命中。
 
-## 硬性约束（违反即出 bug，已踩过坑）
+## 硬性约束（踩过坑，违反即出 bug）
 
-- 任何行为变更必须 bump `@version`——Tampermonkey 靠它推送更新；`@downloadURL`/`@updateURL` 指向 GitHub raw 文件。
-- 帖子行状态只能用 `data-lkcb-state` 属性，不能用 class：Ember 异步重写行的 class，注入的类会被抹掉导致帖子「闪回来」。
-- linux.do 的菜单是深度定制的 Discourse，结构假设必须以本站实测为准，不能用原版 Discourse 推断：
-  - 8 个标签分属 top-tabs / bottom-tabs 两组容器，跨组监听要用 document 级委托；
-  - `li#current-user` 关闭时也带 `user-menu-panel` 类，选择器会误命中——注入入口直接用 profile 按钮 id 定位；
-  - 菜单每次打开都整面板重渲染、关闭即销毁：视图激活态要随之复位，入口靠观察器在面板出现时同步注入；
-  - `panel-body` 是 `overflow: hidden` 固定高度，长列表必须让规则区自己滚动；`.panel-body-contents` 是 row-reverse 横向布局，不要往里追加块级内容；
-  - 菜单内的点击/键盘事件必须 stopPropagation，否则会被菜单委托当成本地导航路由走；
-  - 视图容器复用 `quick-access-panel` 类：隐藏原生面板的 CSS 必须 `:not(#lkcb-quick-access)` 排除自己；限高只允许一层，多层嵌套会裁掉底部按钮；
-- 站点 CDN 样式会隐形覆盖元素的 display / flex-direction / width / justify-content（枚举样式表规则查不到），样式冲突以实测计算样式为准，关键属性显式声明。实例：移动 UA 下 `.quick-access-panel` 被强加 `justify-content: space-between`（桌面 UA 无此规则），导致菜单视图各块被撑出 ~117px 大空隙，v2.3 显式声明 `justify-content: flex-start` 修复。
-- 类别 picker 的下拉必须**文档流内联展开，禁止浮层**（absolute/fixed 都不行）：菜单面板带 Discourse `slide-in` transform 动画，transform 祖先会劫持 fixed 的定位基准并参与裁剪——fixed 下拉实测弹不出来，「编辑时不能搜索类别」也是同类问题（absolute 被滚动容器裁剪）。内联展开零环境依赖，展开时挤开下方内容与行内编辑是同一套交互语言。picker 的 `flex: 1` 只允许在横向 `.lkcb-row` 内使用——放进纵向 flex 布局会变成纵向拉伸导致输入框错位。
-- 强制登录：登录态唯一判定依据是头部 `#current-user`（Discourse 登录后才渲染，本站实测存在）。自动化测试的 mock DOM 必须包含 `#current-user`，否则注入后脚本不启动、全部断言零响应。
-- 观察器只监听 `childList + subtree`，不能加 `attributes`（脚本自己的写入会自我触发）；id 以 `lkcb-` 开头的新增节点会被观察器跳过（用于忽略自身 UI），外部测试 DOM 不要用这个前缀命名。
+- 帖子行状态只能用 `data-lkcb-state` 属性，不能用 class：Ember 会异步重写行的 class。
+- 菜单是深度定制的 Discourse，结构以本站实测为准，不能用原版 Discourse 推断：8 个标签分属两组容器（跨组监听用 document 级委托）；入口用 profile 按钮 id 定位（`li#current-user` 关闭时也带 `user-menu-panel` 类，选择器会误命中）；菜单每次打开整面板重渲染、关闭即销毁，视图激活态随之复位；`panel-body` 是 `overflow: hidden` 固定高度，长列表让规则区自己滚动；`.panel-body-contents` 是 row-reverse 横向布局，别往里追加块级内容；菜单内点击/键盘事件必须 stopPropagation；视图容器复用 `quick-access-panel` 类，隐藏原生面板的 CSS 必须 `:not(#lkcb-quick-access)` 排除自己，限高只允许一层。
+- 站点 CDN 样式会隐形覆盖 display/flex-direction/justify-content 等（枚举样式表查不到），关键属性显式声明，以实测计算样式为准。
+- 类别 picker 下拉必须文档流内联展开，禁止浮层（transform 祖先劫持 fixed、滚动容器裁剪 absolute）；picker 的 `flex: 1` 只能用于横向 `.lkcb-row`。
+- 观察器只监听 `childList + subtree`，禁加 `attributes`（脚本自身 data 写入会自我触发）。匹配缓存**只存命中结果**：站点会原地摘空行内容再填回（置顶公告帖必现），骨架期算出的不命中落缓存会永久漏过滤；`handleAddedNodes` 对文本节点插入也要提升宿主行重算（站点填标题用文本节点，只认元素节点同样漏）。
+- id 以 `lkcb-` 开头的新增节点被观察器跳过（忽略自身 UI），测试 DOM 不要用该前缀。
+- `@version` 由用户管理，agent 不得擅自改动。
 
-## 开发 / 测试习惯
+## 开发 / 测试
 
-- 改动后必须在 linux.do 本站浏览器实测验证（小步、逐项），不能用原版 Discourse 站点或纯推断代替。
-- 自动化测试环境：chrome-devtools-mcp 控制的真实 Chrome（2026-09 从 ZCode 内置浏览器迁移，用户明确弃用内置浏览器），唯一测试环境。启动/注入/轮询流程、CSP 约束与 MCP 侧增强检查（真实控制台监控、网络请求清单、性能追踪、截图目检）统一见 `tests/README.md` 运行手册。真实 Chrome 下无限滚动可被合成 wheel 稳定触发；隐藏延迟均值 90–120ms 属 Ember 骨架→文本填充节奏，CLS≈0 才是闪现权威指标。仍非通用环境：可疑偶发失败先怀疑测试环境——重试再判断，不要为此在脚本或测试代码里加环境补丁。
-- 会话恢复：`linux.do_cookies.txt`（Netscape 格式，已 gitignore）。登出测试后用它恢复登录；令牌有效性与登出是否吊销有关，恢复失败需用户手动登录。
-- 自动化回归（六套，全部由 Chrome DevTools MCP 按 `tests/README.md` 流程驱动；重复运行前先刷新页面。目录：`tests/suites/` 放页内断言载荷、`tests/fixtures/` 放测试数据，入口文档是 `tests/README.md`）：
-  - `tests/suites/console.js`：33 项功能断言（登录门槛——未登录不启动/登录自动启动/入口位置/视图切换/旧关键词存储迁移/规则 CRUD/类别选择器 picker——输入过滤/点选回显/× 清除/类别徽章与标签/类别精确匹配——父分类不连带子分类、子分类单独命中/标题匹配/组合规则 AND 语义含三字段/单规则启停/行内编辑——展开回填/保存/取消/模式/总开关/标签切换）+ 运行流程的独立阶段验证存储损坏回退（刷新 → 预写坏 JSON → 注入 → 断言零报错且回退默认设置）。运行按 `tests/README.md` 通用注入模式。
-  - `tests/suites/rule-stress.js` + `tests/fixtures/rule-stress.json`：规则匹配语义压测——17 条真实组合规则（格式与脚本导出一致：高频标题词、大写形态、`C++` 特殊字符、英文标签小写、仅类别（父分类精确不连带子分类/子分类单独命中）、类别+标签/类别+标题/标签+标题/三字段 AND、永不命中词、enabled:false 停用规则）。核心是**影子匹配器**：测试独立实现一遍匹配逻辑，对每个帖子行算期望状态，与 data-lkcb-state/data-lkcb-match 逐行比对——信息流怎么变断言都成立；各规则真实命中行数仅 info 参考。分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=搞七捻三 Lv1）取自 2026-09 实测，站点改 ID 需同步。尚未在站点跑过（新增于 2026-09-09）。
-  - `tests/suites/bulk-stress.js` + `tests/fixtures/stress-keywords.txt`：97 个有意义的词（交易/广告/求职/技术词等真实屏蔽场景，含 `C++`、`.NET` 等特殊字符词与长句），测试将其转为仅标题规则后压测头像菜单视图，检查内部滚动、footer 可见、无横向溢出、滚动到底删除、过滤联动。与 rule-stress 的分工：本套件压 UI 承载，rule-stress 压匹配语义。
-  - `tests/suites/performance.js`：CLS（PerformanceObserver layout-shift）、隐藏延迟（行插入与 data-lkcb-state 出现的 MutationObserver 配对 + 确定性探针：克隆隐藏行剥掉标记插回，走真实观察器管线保证有样本；延迟含 Ember 骨架→文本填充时间，仅作参考——探针期 CLS≈0 才是「绘制前隐藏、无闪现」的权威证明）、长任务（注意：无脚本对照下站点自身也出现 ~3s 长任务，非脚本造成）、滚动风暴（12×1500px，合成 wheel 事件 + scrollBy——纯 scrollBy 不会触发该站加载器）、网络请求增量（Resource Timing，开头需 setResourceTimingBufferSize 扩容，默认 250 条会写满）。
-  - CSP 硬约束：脚本只允许 eval 一次，且必须在首个 await 之前的同步段执行——await 之后的定时器回调里 eval 会被站点 CSP（无 'unsafe-eval'）拦截。六套的注入点都已遵守此约束。
-  - `tests/suites/spa.js`：SPA 路由重建零闪现测试——真实点击「热门/最新」路由标签（`#navigation-bar`，不是侧边栏）触发 Ember 列表整体重建，页面不重载、脚本存活。验证：路由完成、重建列表中过滤照常生效、每次切换 CLS 增量 = 0（行未绘制即被隐藏的硬证据；隐藏延迟仅作参考，含骨架→文本填充时间）、零泄漏（命中标题规则却未隐藏的行数为 0）、零报错。「显示 N 个新话题」按钮场景（站点实时来新帖）不自动化：无法确定性触发，且底层插入管线与路由重建/perf 探针同源，已被等效覆盖。
-  - `tests/suites/narrow-screen.js`：窄屏深测。视口由外部流程预设为目标窄屏后刷新再运行；覆盖滑入抽屉视图（规则行数量/内部滚动/footer 可见/无横向溢出/视图在抽屉可视区内）、过滤、页面无横向溢出（历史：长词胶囊换行/截断的 content-box 溢出 bug 由 v2.2 加 `box-sizing: border-box` 修复）。自带 43 个长短中英混合词。**必须跑两遍**：桌面 UA（覆盖媒体查询类差异）+ 移动 UA（emulate 同时设 iPhone Safari userAgent，覆盖站点移动样式表差异——v2.3 的 justify-content bug 只有移动 UA 能复现）。390/768/320 桌面 UA 与 393/320 移动 UA 在 v2.4.1 基线全绿。
-  - 未覆盖（用户明确无需或需人工）：导出下载、真实登出（已验证过一次）、真实 Tampermonkey 环境冒烟。
-- git 提交/推送需用户明确发话，不要自行操作。
+- 改动后必须在 linux.do 本站实测（小步逐项），不能用原版 Discourse 或推断代替。
+- 测试环境：chrome-devtools-mcp 控制的真实 Chrome（唯一环境），注入流程与 CSP 约束见 `tests/README.md`。可疑偶发失败先怀疑环境，重试再判断，不加环境补丁。
+- 会话恢复：`linux.do_cookies.txt`（Netscape 格式，已 gitignore）。
+- 自动化回归六套（`tests/suites/`，数据在 `tests/fixtures/`，入口 `tests/README.md`；重复运行前先刷新页面）：
+
+| 套件             | 覆盖                                                                                                                                  | 结果标志                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| console.js       | 34 项功能断言（登录门槛/CRUD/picker/精确匹配/AND/启停/行内编辑/存储损坏回退），自建 mock DOM                                          | `__lkcbTestResults`       |
+| rule-stress.js   | 17 条组合规则匹配语义，影子匹配器逐行比对；分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=Lv1）取自 2026-09 实测，站点改 ID 需同步 | `__lkcbRuleStressResults` |
+| bulk-stress.js   | 97 词仅标题规则压 UI 承载（滚动/footer/溢出/删除/过滤联动）                                                                           | `__lkcbStressResults`     |
+| performance.js   | CLS/隐藏延迟/长任务/滚动风暴/网络增量                                                                                                 | `__lkcbPerfResults`       |
+| spa.js           | 热门/最新路由重建零闪现、零泄漏、CLS=0                                                                                                | `__lkcbSpaResults`        |
+| narrow-screen.js | 窄屏抽屉视图/过滤/无横向溢出；桌面 UA + 移动 UA 各跑一遍                                                                              | `__lkcbNarrowResults`     |
+
+- CSP 硬约束：脚本在每份文档只允许 eval 一次，且必须发生在 evaluate 的同步栈内（await 后再 eval 会被站点 CSP 拦截）。
+- 未覆盖（用户明确无需或需人工）：导出下载、真实登出、真实 Tampermonkey 环境冒烟。
+- git 提交/推送需用户明确发话。

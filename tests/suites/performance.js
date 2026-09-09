@@ -1,41 +1,7 @@
 /* eslint-disable */
-// ============================================================================
-// Linux.do Keyword Blocker — 性能测试（Chrome DevTools MCP 驱动，见 tests/README.md；
-// 运行前刷新并停在 linux.do /latest 列表页，已登录）
-// ============================================================================
-//
-// 【运行前提】
-//   1. MCP 连接的 Chrome 已登录 linux.do，刷新后停留在 /latest；
-//   2. 本地服务 node tests/serve.js 已启动；
-//   3. 按tests/README.md 的通用注入模式拉取并 eval 本文件。
-//
-// 【关键约束】被测脚本只允许 eval 一次，且必须在首个 await 之前的同步段执行：
-//   定时器回调（await 之后的异步延续）里的 eval 会被站点 CSP 拦截
-//   （script-src 'nonce-…' 'strict-dynamic'，无 'unsafe-eval'）。
-//   因此本文件把「采样标题 → 写设置 → eval 注入」全部放在同步段。
-//
-// 【监控手段】
-//   1. CLS：PerformanceObserver(layout-shift, buffered) 累计布局偏移分数；
-//      页面加载期的历史偏移由 buffered 条目补发，基线在注入后、风暴前截取；
-//   2. 长任务：PerformanceObserver(longtask) 记录 >50ms 的主线程阻塞；
-//      注意真实 Chrome 下 Discourse 自己渲染长列表也会产生多个 1-2s 长任务；
-//   3. 隐藏延迟：配对 MutationObserver——行插入时间戳 vs data-lkcb-state
-//      出现时间戳。真实 Chrome 下新行以骨架先插入、文本后填充，延迟（实测
-//      avg 90-120ms）含文本填充时间；行在填充前只是灰色骨架，探针期
-//      CLS≈0 才是「绘制前隐藏、无闪现」的权威指标；
-//   4. 网络请求量：Resource Timing 统计滚动加载期间的请求数与传输字节数增量
-//      （开头需 setResourceTimingBufferSize 扩容，默认 250 条会写满）。
-//
-// 【MCP 侧增强检查】（页内断言之外的第二层，见 tests/README.md 第五节）
-//   list_network_requests 核对 /latest.json 等真实请求；performance_start_trace
-//   可获得浏览器级 LCP/CLS/INP insight。
-//
-// 【流程】同步段：监控 + 探测词采样 + 注入 → 基线期 900ms → 滚动风暴
-//   （12 轮 × 1500px，合成 wheel 事件 + scrollBy，触发无限滚动）
-//   → 隐藏延迟探针（克隆隐藏行插回 ×10）→ 汇总。
-// 【输出】window.__lkcbPerfResults：风暴期 CLS 增量、隐藏延迟 avg/max、
-//   长任务、网络请求增量、最终行数/隐藏数、JS 错误。
-// ============================================================================
+// 性能压测：CLS、隐藏延迟（探针期 CLS≈0 才是「绘制前隐藏」权威证明，延迟均值属 Ember 骨架节奏仅参考）、
+// 长任务（站点自身也有 ~3s 长任务）、滚动风暴（合成 wheel + scrollBy）、网络增量（开头需 setResourceTimingBufferSize 扩容）。
+// 结果挂 window.__lkcbPerfResults（附 __lkcbPerfStage）。
 
 (async function () {
   if (window.__lkcbPerfRunning) return console.warn('[lkcb-perf] 已在运行中');

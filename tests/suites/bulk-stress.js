@@ -1,26 +1,7 @@
 /* eslint-disable */
-// ============================================================================
-// Linux.do Keyword Blocker — 海量规则压测（Chrome DevTools MCP 驱动，见 tests/README.md）
-// ============================================================================
-//
-// 【运行前提】
-//   1. MCP 连接的 Chrome 已登录 linux.do，页面已刷新（避免多实例）；
-//   2. 本地服务 node tests/serve.js 已启动；
-//   3. 按tests/README.md 的通用注入模式拉取并 eval 本文件；注入时同时把
-//      tests/fixtures/stress-keywords.txt（纯逗号分隔）按逗号切分为
-//      window.__LKCB_STRESS_KEYWORDS__（≥50 个），测试将其转为仅标题规则。
-//      与 rule-stress 的分工：本套件压「海量仅标题规则」的 UI 承载（渲染/
-//      滚动/删除），规则匹配语义由 tests/suites/rule-stress.js 用真实组合
-//      规则验证。
-//
-// 【流程】海量规则依次压测：
-//   A. 头像菜单视图：打开头像菜单 → 屏蔽规则标签 → 渲染耗时 → 结构检查
-//      （行数/内部滚动/footer 可见/无横向溢出/视图在视口内）→ 滚动到底删除行
-//   B. 过滤联动：通过 UI 添加一个当前页面真实标题前缀词，验证列表行隐藏数 > 0
-//
-// 【输出】每项 PASS/FAIL + 性能数字（渲染耗时 ms、隐藏行数等），挂到
-//   window.__lkcbStressResults；结束后自动恢复原始设置并清理。
-// ============================================================================
+// 海量仅标题规则压 UI 承载（97 词来自 fixtures/stress-keywords.txt）：菜单视图渲染/
+// 内部滚动/footer 可见/无横向溢出/滚动到底删除/过滤联动。匹配语义由 rule-stress 覆盖。
+// 结果挂 window.__lkcbStressResults。
 
 (async function () {
   if (window.__lkcbStressRunning)

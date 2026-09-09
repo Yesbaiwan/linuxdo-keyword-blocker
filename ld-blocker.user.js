@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.4.1
+// @version      2.4.2
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -330,16 +330,20 @@
     let rule = null;
     for (const cached of ruleCache) {
       // 规则内已填字段必须全部命中：类别按徽章 ID 精确比对（只认所选分类
-      // 本身），标签/标题按包含匹配，大小写不敏感
+      // 本身），标签按文字精确匹配（子串不算），标题按包含匹配，大小写不敏感
       if (cached.category != null && !catIds.has(cached.category)) continue;
-      if (cached.tag && !tags.some((tag) => tag.includes(cached.tag))) continue;
+      if (cached.tag && !tags.some((tag) => tag === cached.tag)) continue;
       if (cached.title && !title.includes(cached.title)) continue;
       rule = cached.label;
       break;
     }
-    entry = { v: matchVersion, rule };
-    if (id) matchCache.set(id, entry);
-    else nodeMatchCache.set(topic, entry);
+    // 只缓存命中结果：站点会原地摘空行内容再填回（骨架期），此刻算出的
+    // 不命中只是中间态，落缓存会让后续重算永远吃到过期的 null
+    if (rule) {
+      entry = { v: matchVersion, rule };
+      if (id) matchCache.set(id, entry);
+      else nodeMatchCache.set(topic, entry);
+    }
     return rule;
   }
 
@@ -458,7 +462,7 @@
 </div>
 <div class="lkcb-row" id="lkcb-form-cat"></div>
 <div class="lkcb-row">
-    <input id="lkcb-rule-tag" type="text" autocomplete="off" placeholder="标签（包含即命中）" />
+    <input id="lkcb-rule-tag" type="text" autocomplete="off" placeholder="标签（精确匹配）" />
     <input id="lkcb-rule-title" type="text" autocomplete="off" placeholder="标题（包含即命中）" />
 </div>
 <div class="lkcb-row">
@@ -689,7 +693,7 @@
     const tagInput = document.createElement('input');
     tagInput.type = 'text';
     tagInput.className = 'lkcb-edit-tag';
-    tagInput.placeholder = '标签（包含即命中）';
+    tagInput.placeholder = '标签（精确匹配）';
     tagInput.value = editDraft.tag;
     tagInput.addEventListener('input', () => {
       editDraft.tag = tagInput.value;
@@ -980,43 +984,48 @@
     const active = settings.enabled && ruleCache.length > 0;
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        // 站点填回行内容（如标题）用的是插入文本节点，只认元素节点会漏算
+        if (
+          node.nodeType !== Node.ELEMENT_NODE &&
+          node.nodeType !== Node.TEXT_NODE
+        )
+          continue;
+        const el =
+          node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+        if (!el) continue;
         // 自身 UI 跳过：观察器不处理 lkcb- 前缀节点，避免自我触发
-        if (node.id.startsWith('lkcb-')) continue;
-        assertRulesView(node);
-        watchForMenuPanel(node);
+        if (el.id.startsWith('lkcb-')) continue;
+        assertRulesView(el);
+        watchForMenuPanel(el);
         if (!active) {
           // 屏蔽关闭时，清掉 Ember 回收复用节点上可能残留的旧状态
-          node.removeAttribute('data-lkcb-state');
-          node.removeAttribute('data-lkcb-match');
-          node
-            .querySelectorAll('[data-lkcb-state],[data-lkcb-match]')
-            .forEach((el) => {
-              el.removeAttribute('data-lkcb-state');
-              el.removeAttribute('data-lkcb-match');
-            });
+          el.removeAttribute('data-lkcb-state');
+          el.removeAttribute('data-lkcb-match');
+          el.querySelectorAll('[data-lkcb-state],[data-lkcb-match]').forEach(
+            (n) => {
+              n.removeAttribute('data-lkcb-state');
+              n.removeAttribute('data-lkcb-match');
+            },
+          );
           continue;
         }
-        if (node.matches(TOPIC_SELECTORS)) {
+        if (el.matches(TOPIC_SELECTORS)) {
           // 未挂载的节点父链不完整，可能被误判为最外层行；等挂载时随子树统一处理
-          if (
-            node.isConnected &&
-            !node.parentElement?.closest(TOPIC_SELECTORS)
-          ) {
-            applyTopicState(node, findMatchedRule(node));
-            clearNestedState(node);
+          if (el.isConnected && !el.parentElement?.closest(TOPIC_SELECTORS)) {
+            applyTopicState(el, findMatchedRule(el, true));
+            clearNestedState(el);
           }
           continue;
         }
-        const descendants = node.querySelectorAll(TOPIC_SELECTORS);
+        const descendants = el.querySelectorAll(TOPIC_SELECTORS);
         if (descendants.length === 0) {
           // 行内容通常是骨架先插入、文本后填充；带文本的节点才可能改变匹配结果
-          if (!node.textContent.trim()) continue;
+          if (!el.textContent.trim()) continue;
         }
         // 所属行内容已变化，强制重算（绕过按 topicId 的缓存）
         // 提升到最外层命中元素：搜索结果等场景下内层 [data-topic-id] 也符合选择器，
         // 直接用会把状态打在内层上
-        let host = node.parentElement?.closest(TOPIC_SELECTORS);
+        let host = el.parentElement?.closest(TOPIC_SELECTORS);
         if (host) {
           let outer = host.parentElement?.closest(TOPIC_SELECTORS);
           while (outer) {

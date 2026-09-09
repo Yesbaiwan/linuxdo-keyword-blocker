@@ -1,28 +1,8 @@
 /* eslint-disable */
-// ============================================================================
-// Linux.do Keyword Blocker — 规则语义压测（Chrome DevTools MCP 驱动，见 tests/README.md）
-// ============================================================================
-// 【目的】验证「类别/标签/标题」规则的真实匹配语义。与 bulk-stress 的分工：
-//   bulk-stress 把海量关键词转成仅标题规则压 UI 承载；本套件用少量真实组合
-//   规则压匹配语义。规则集预写在 tests/fixtures/rule-stress.json（17 条，
-//   格式与脚本导出一致），分类 ID 取自 2026-09 实测：
-//   4=开发调优 11=搞七捻三 14=资源荟萃 35=搞七捻三 Lv1（子分类）。
-//   1-3  仅标题高频词；4  大写形态（大小写不敏感）；5  特殊字符词；
-//   6-7  标签（英文小写形态/中文）；8-10  仅类别（父分类精确匹配，不连带
-//   子分类；35 验证子分类单独命中）；11-15  类别/标签/标题 AND 组合（含
-//   三字段全填）；16  永不命中词（误伤检测）；17  enabled:false 停用规则
-//   （必命中场景但不得生效）。
-//
-// 【核心方法】影子匹配器：测试内部独立实现一遍规则匹配（读行的徽章 ID /
-//   标签 / 标题文本），对每个帖子行算出「期望状态」，与脚本实际写入的
-//   data-lkcb-state / data-lkcb-match 逐行对比。信息流内容怎么变断言都成立，
-//   不依赖任何一条规则当轮必须命中；各规则的真实命中行数以 info 输出供参考。
-//
-// 【流程】A. 预置存储 + 注入 → 影子对比第一轮；B. 规则级断言（永不命中词
-//   0 行 / 停用规则 0 行 / 期望命中总数 > 0）；C. UI 联动（菜单行数、停用行
-//   删除线、勾选启用停用规则后影子对比第二轮）；D. 全程零 JS 错误。
-// 【输出】window.__lkcbRuleStressResults；结束自动恢复原始设置并清理。
-// ============================================================================
+// 规则匹配语义压测：17 条真实组合规则（fixtures/rule-stress.json）+ 影子匹配器
+// 逐行比对期望与实际 data-lkcb-state/match，断言不依赖信息流内容。
+// 分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=Lv1）取自 2026-09 实测，站点改 ID 需同步。
+// 结果挂 window.__lkcbRuleStressResults。
 
 (async function () {
   if (window.__lkcbRuleStressRunning)
@@ -120,7 +100,7 @@
       .filter(Boolean);
     const title = norm(rowTitle(row));
     if (rule.category != null && !catIds.has(String(rule.category))) return false;
-    if (rule.tag && !tags.some((t) => t.includes(norm(rule.tag)))) return false;
+    if (rule.tag && !tags.some((t) => t === norm(rule.tag))) return false;
     if (rule.title && !title.includes(norm(rule.title))) return false;
     return true;
   }
