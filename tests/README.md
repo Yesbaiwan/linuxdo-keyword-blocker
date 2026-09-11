@@ -2,7 +2,7 @@
 
 三套断言载荷，跑在**测试专用 Chrome profile**（`tests/.chrome-profile`，已 gitignore）里，对已登录的 linux.do 页面执行：
 
-- [suites/console.js](suites/console.js)：功能回归，自建 mock DOM，不依赖站点内容，57 条。
+- [suites/console.js](suites/console.js)：功能回归，自建 mock DOM，不依赖站点内容，59 条。
 - [suites/spa.js](suites/spa.js)：真实信息流 + SPA 页内路由，点击站点导航标签切换列表，验证切换后过滤照常、无残留状态、零报错，11 条。
 - [suites/perf.js](suites/perf.js)：性能与抖动，加载 [fixtures/rules-sample.json](fixtures/rules-sample.json)（27 条真实规则集）并滚动加载多页，7 条断言 + 一行指标；**淡化 / 隐藏两种模式各跑一遍**（`perf-dim` / `perf-hide`）。
 

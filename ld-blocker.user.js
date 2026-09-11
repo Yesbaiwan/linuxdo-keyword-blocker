@@ -25,6 +25,7 @@
   const STORAGE_KEY = 'linuxdo-keyword-blocker-settings';
   const CATEGORY_CACHE_KEY = 'linuxdo-keyword-blocker-categories';
   const CATEGORY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 站点类别树体积大，缓存 7 天
+  const SITE_JSON_TIMEOUT = 8000; // /site.json 单次拉取上限：挂起时按失败重试，别把 ready 无限拖住
   const MAX_TAGS = 3; // 单条规则的标签上限（每框一个，点「+」增设）
   // 规则 { category, allLevels, tags, noTag, title, enabled }：已填字段全部命中才命中（AND），
   // 至少填一项；allLevels 命中自身+全部等级后代，noTag 匹配零标签帖（与 tags 互斥）
@@ -132,6 +133,8 @@
         try {
           const res = await fetch('/site.json', {
             headers: { Accept: 'application/json' },
+            // 挂起的连接靠超时掐断，走既有的重试 → 降级路径（徽章 ID 匹配照常）
+            signal: AbortSignal.timeout?.(SITE_JSON_TIMEOUT),
           });
           if (!res.ok) throw new Error('site.json ' + res.status);
           const data = await res.json();
@@ -220,7 +223,10 @@
   function normalizeRules(rules) {
     const seen = new Set();
     const out = [];
-    for (const raw of rules || []) {
+    // 形状不对（手改存储 / 导入非数组 JSON）一律当作没有：for...of 对非可迭代值会抛错，
+    // 把 loadSettings / 导入整条链路炸掉
+    if (!Array.isArray(rules)) return out;
+    for (const raw of rules) {
       const parsed = parseInt(raw?.category, 10);
       const category = Number.isNaN(parsed) ? null : parsed;
       // 「零标签」与标签列表互斥，勾选 noTag 后不保留 tags

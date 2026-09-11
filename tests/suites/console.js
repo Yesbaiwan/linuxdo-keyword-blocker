@@ -203,11 +203,14 @@
     // 验「拉不到 → 状态行提示 + 下拉给重试入口 → 点重试真能拉回来」
     localStorage.removeItem('linuxdo-keyword-blocker-categories');
     const realFetch = window.fetch;
+    window.__lkcbSiteSignals = []; // 记下脚本给每次 site.json 拉取挂的超时信号（文末断言）
     window.fetch = (input, init) => {
       const url = typeof input === 'string' ? input : input?.url || '';
-      return url.includes('/site.json')
-        ? Promise.reject(new Error('blocked-for-test'))
-        : realFetch.call(window, input, init);
+      if (url.includes('/site.json')) {
+        if (init?.signal) window.__lkcbSiteSignals.push(init.signal);
+        return Promise.reject(new Error('blocked-for-test'));
+      }
+      return realFetch.call(window, input, init);
     };
     window.GM = {
       getValue: (k, d) => Promise.resolve(localStorage.getItem(k) ?? d),
@@ -812,6 +815,12 @@
       statusText().includes('导入失败') && chips().length === 3,
       statusText(),
     );
+    await importFile('{}');
+    assert(
+      '导入：合法 JSON 但不是规则数组，同样给提示且不动现有规则',
+      statusText().includes('导入失败') && chips().length === 3,
+      statusText(),
+    );
     // ◆ 规则集文件本身：≥20 条，且每条都能被归一化保留（没有全空/重复的废项）
     const sampleText = (() => {
       const x = new XMLHttpRequest();
@@ -858,6 +867,17 @@
         !document.getElementById('lkcb-empty').hidden,
       `${chips().length} 条 / ${statusText()}`,
     );
+
+    // ◆ site.json 拉取的超时信号：挂起的连接会被掐断走重试，而不是把过滤无限期拖住
+    const siteSignals = window.__lkcbSiteSignals || [];
+    assert(
+      'site.json 拉取挂 8s 超时信号（套件时长早已超过 8s，信号应全部自动 abort）',
+      siteSignals.length > 0 && siteSignals.every((s) => s.aborted),
+      `${siteSignals.length} 个信号 / aborted=[${siteSignals.map((s) => s.aborted)}]`,
+    );
+    // 存储形状损坏（合法 JSON 但 rules 非数组）的回退不在此处覆盖：站点 CSP 每文档只允许
+    // eval 一次，无法在本套件内二次注入；该路径与导入共用 normalizeRules 的同一守卫，
+    // 由上面「导入合法 JSON 但不是规则数组」的用例钉住。
 
     assert('全程零 JS 错误', pageErrors.length === 0, pageErrors.join('; '));
   } catch (e) {
