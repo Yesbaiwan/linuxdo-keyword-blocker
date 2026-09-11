@@ -1,6 +1,6 @@
 {
   "name": "linuxdo-keyword-blocker",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "private": true,
   "description": "Linux.do Keyword Blocker 的本地测试工具（脚本本体无构建、无依赖）",
   "scripts": {

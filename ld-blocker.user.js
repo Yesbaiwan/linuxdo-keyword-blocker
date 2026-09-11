@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.5.0
+// @version      2.5.1
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -110,8 +110,8 @@
       for (const childId of catChildren.get(id) || []) walk(childId, depth + 1);
     };
     for (const topId of catOrder) walk(topId, 0);
-    // 余量：输入框内边距 16 + 清除键与箭头 ≈24 + 边框留白
-    panel.style.setProperty('--lkcb-field-w', `${Math.ceil(widest) + 48}px`);
+    // --lkcb-field-w 是输入框本身的宽度（清除键与箭头在框外）：内边距 16 + 边框与余量 8
+    panel.style.setProperty('--lkcb-field-w', `${Math.ceil(widest) + 24}px`);
   }
 
   // 缓存优先（7 天）拉站点类别树；拉不到重试 3 次，仍失败就标记出来，在面板里提示并给重试入口
@@ -223,7 +223,7 @@
     for (const raw of rules || []) {
       const parsed = parseInt(raw?.category, 10);
       const category = Number.isNaN(parsed) ? null : parsed;
-      // 「无标签」与标签列表互斥，勾选 noTag 后不保留 tags
+      // 「零标签」与标签列表互斥，勾选 noTag 后不保留 tags
       const noTag = !!raw?.noTag;
       const rule = {
         category,
@@ -247,7 +247,7 @@
     const parts = [];
     if (rule.category != null)
       parts.push('类别:' + categoryName(rule.category, rule.allLevels));
-    if (rule.noTag) parts.push('无标签');
+    if (rule.noTag) parts.push('零标签');
     else if (rule.tags.length) parts.push('标签:' + rule.tags.join('、'));
     if (rule.title) parts.push('标题:' + rule.title);
     return parts.join(' + ');
@@ -393,7 +393,7 @@
     // prettier-ignore
     style.textContent = `/* 行状态 */ [data-lkcb-state="hidden"] { display: none !important; } [data-lkcb-state="dimmed"] { opacity: 0.2 !important; } [data-lkcb-state="dimmed"]:hover { opacity: 0.8 !important; }
 /* 遮罩与面板 */ #lkcb-overlay { position: fixed; inset: 0; z-index: 2147483000; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.45); } #lkcb-overlay.lkcb-open { display: flex; }
-#lkcb-panel { --lkcb-field-w: 210px; display: flex; flex-direction: column; width: 540px; max-height: 100%; overflow: hidden; background: var(--secondary, #ffffff); color: var(--primary, #222222); border: 1px solid var(--primary-low, #dddddd); border-radius: 10px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35); font-size: 14px; } #lkcb-panel [hidden] { display: none !important; }
+#lkcb-panel { --lkcb-field-w: 190px; display: flex; flex-direction: column; width: 540px; max-height: 100%; overflow: hidden; background: var(--secondary, #ffffff); color: var(--primary, #222222); border: 1px solid var(--primary-low, #dddddd); border-radius: 10px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35); font-size: 14px; } #lkcb-panel [hidden] { display: none !important; }
 /* 站点给 input/checkbox 的隐含外边距会把控件挤歪：面板内一律归零并统一高度 */
 #lkcb-panel input, #lkcb-panel select, #lkcb-panel button, #lkcb-panel label, #lkcb-panel ul, #lkcb-panel li { margin: 0; box-sizing: border-box; }
 #lkcb-panel input[type="text"], #lkcb-panel select { height: 32px; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); } #lkcb-panel input[type="text"] { flex: 1; min-width: 0; } #lkcb-panel select { flex: none; width: fit-content; } #lkcb-panel input.lkcb-title { flex: 0 0 var(--lkcb-field-w); } #lkcb-panel input[type="text"]:focus { outline: 2px solid var(--tertiary, #0088cc); outline-offset: -1px; }
@@ -403,10 +403,10 @@
 /* 无边框图标按钮：关闭 / 类别清除 / 类别箭头 / 标签 × */ #lkcb-panel #lkcb-close, #lkcb-panel .lkcb-cat-clear, #lkcb-panel .lkcb-cat-caret, #lkcb-panel .lkcb-tag-remove { flex-shrink: 0; border: none; background: none; padding: 0; line-height: 1; color: var(--primary-medium, #919191); cursor: pointer; }
 #lkcb-panel #lkcb-close { padding: 2px 8px; font-size: 18px; } #lkcb-panel .lkcb-cat-clear { font-size: 14px; } #lkcb-panel .lkcb-cat-caret { font-size: 10px; }
 #lkcb-panel #lkcb-close:hover, #lkcb-panel .lkcb-cat-clear:hover, #lkcb-panel .lkcb-tag-remove:hover { color: var(--danger, #ff5555); } #lkcb-panel .lkcb-cat-caret:hover { color: var(--primary, #222222); }
-/* 类别下拉：候选列表是 fixed 浮层，不参与面板布局 */ #lkcb-panel .lkcb-cat-picker { flex: 0 0 var(--lkcb-field-w); min-width: 0; } #lkcb-panel .lkcb-cat-input-row { display: flex; align-items: center; gap: 2px; } #lkcb-panel .lkcb-cat-input-row .lkcb-cat-input { flex: 1; min-width: 0; }
+/* 类别下拉：候选列表是 fixed 浮层，不参与面板布局；输入框宽度与标题框一致（清除键与箭头在框外） */ #lkcb-panel .lkcb-cat-picker { flex: 0 0 auto; min-width: 0; } #lkcb-panel .lkcb-cat-input-row { display: flex; align-items: center; gap: 2px; } #lkcb-panel .lkcb-cat-input-row .lkcb-cat-input { flex: none; width: var(--lkcb-field-w); }
 #lkcb-panel .lkcb-cat-list { position: fixed; box-sizing: border-box; z-index: 5; max-height: 220px; overflow-y: auto; background: var(--secondary, #ffffff); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
 #lkcb-panel .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #lkcb-panel .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); } #lkcb-panel .lkcb-cat-none { color: var(--primary-medium, #919191); } #lkcb-panel .lkcb-cat-item[data-retry] { color: var(--danger, #ff5555); }
-/* 标签组：框 + 框内右侧 × + 添加按钮 + 「无标签」 */ #lkcb-panel .lkcb-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; } #lkcb-panel .lkcb-tag-box { position: relative; display: flex; align-items: center; flex: 0 1 108px; min-width: 0; } #lkcb-panel .lkcb-tag-box input[type="text"] { flex: 1; min-width: 0; padding-right: 22px; }
+/* 标签组：框 + 框内右侧 × + 添加按钮 + 「零标签」 */ #lkcb-panel .lkcb-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; } #lkcb-panel .lkcb-tag-box { position: relative; display: flex; align-items: center; flex: 0 1 108px; min-width: 0; } #lkcb-panel .lkcb-tag-box input[type="text"] { flex: 1; min-width: 0; padding-right: 22px; }
 #lkcb-panel .lkcb-tag-remove { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; font-size: 14px; }
 #lkcb-panel .lkcb-tag-add { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; background: none; color: var(--primary-medium, #919191); font-size: 16px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-tag-add:hover { color: var(--tertiary, #0088cc); border-color: var(--tertiary, #0088cc); }
 #lkcb-panel .lkcb-notag-label { display: flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap; font-size: 13px; cursor: pointer; }
@@ -427,7 +427,7 @@
     return row;
   }
 
-  // 类别下拉 + 标签组 + 标题 + 无标签，添加与行内编辑共用同一套字段与排版，
+  // 类别下拉 + 标签组 + 标题 + 零标签，添加与行内编辑共用同一套字段与排版，
   // 差异只在调用方挂进 actions 的按钮
   function createRuleForm(initial, onSubmit) {
     const picker = createCategoryPicker(initial);
@@ -445,10 +445,10 @@
     noTag.checked = !!initial?.noTag;
     tagsRow.insertAdjacentHTML(
       'beforeend',
-      '<label class="lkcb-notag-label" title="只匹配不带任何标签的帖子；勾选后标签框全部收起，标签条件即「零标签」，可与类别、标题叠加">无标签</label>',
+      '<label class="lkcb-notag-label" title="匹配不带任何标签的帖子">零标签</label>',
     );
     tagsRow.querySelector('.lkcb-notag-label').prepend(noTag);
-    // 勾选「无标签」= 标签条件换成「零标签」，标签框此时无意义，整组收起
+    // 勾选「零标签」= 标签条件即「不带标签」，标签框此时无意义，整组收起
     const syncNoTag = () => tags.setBoxesHidden(noTag.checked);
     noTag.addEventListener('change', syncNoTag);
     syncNoTag();
@@ -673,7 +673,7 @@
     const boxes = () => [...container.querySelectorAll('.lkcb-tag-box')];
     const values = () =>
       normalizeTags(boxes().map((box) => box.querySelector('input').value));
-    let boxesHidden = false; // 「无标签」勾选时整组框收起（行内的复选框本身留着）
+    let boxesHidden = false; // 「零标签」勾选时整组框收起（行内的复选框本身留着）
     function syncControls() {
       const count = boxes().length;
       add.hidden = boxesHidden || count >= MAX_TAGS;
@@ -686,7 +686,7 @@
       if (boxes().length >= MAX_TAGS) return null;
       add.insertAdjacentHTML(
         'beforebegin',
-        '<span class="lkcb-tag-box"><input type="text" autocomplete="off" class="lkcb-tag-input" title="标签需完全一致才命中（子串不命中）" /><button type="button" class="lkcb-tag-remove" title="移除该标签框">×</button></span>',
+        '<span class="lkcb-tag-box"><input type="text" autocomplete="off" class="lkcb-tag-input" placeholder="精确命中" title="标签需完全一致才命中（子串不命中）" /><button type="button" class="lkcb-tag-remove" title="移除该标签框">×</button></span>',
       );
       const box = add.previousElementSibling;
       const input = box.querySelector('input');

@@ -25,8 +25,16 @@ const SUITES = {
   console: { file: 'tests/suites/console.js', results: '__lkcbTestResults' },
   spa: { file: 'tests/suites/spa.js', results: '__lkcbSpaResults' },
   // 处理模式两跑都要：隐藏会把行从布局里摘掉、淡化只改透明度，抖动与开销不是一回事
-  'perf-dim': { file: 'tests/suites/perf.js', mode: 'dim', results: '__lkcbPerfResults' },
-  'perf-hide': { file: 'tests/suites/perf.js', mode: 'hide', results: '__lkcbPerfResults' },
+  'perf-dim': {
+    file: 'tests/suites/perf.js',
+    mode: 'dim',
+    results: '__lkcbPerfResults',
+  },
+  'perf-hide': {
+    file: 'tests/suites/perf.js',
+    mode: 'hide',
+    results: '__lkcbPerfResults',
+  },
 };
 const EXPAND = {
   console: ['console'],
@@ -34,27 +42,6 @@ const EXPAND = {
   perf: ['perf-dim', 'perf-hide'],
   both: ['console', 'spa', 'perf-dim', 'perf-hide'],
 };
-
-// 专用 profile 是我们自己建的、只导入 cookie，正常不该有会干扰测量的扩展。但 Chrome 会自带组件扩展
-// （实测有 Adobe Acrobat、Web Store 付款），所以不能见扩展就拦，只认两类会污染测量的：
-// 油猴（注入本脚本 → 双实例）与广告拦截（改 DOM / 拦请求）。按扩展 ID 判定，ID 是稳定的。
-const POLLUTING_EXT = {
-  dhdgffkkebhmkfjojejmpbldmpobfkfo: 'Tampermonkey',
-  gcalenpjmijncebpfijmoaglllgpjagf: 'Tampermonkey Beta',
-  cjpalhdlnbpafiamejdnhcphjbkeiagm: 'uBlock Origin',
-  ddkjiahejlhfcafbddmgiahcphecmpfh: 'uBlock Origin Lite',
-  gighmmpiobklfepjocnamgkkbiglidom: 'AdBlock',
-  cfhdojbkjhnklbpkdaibdccddilifddb: 'Adblock Plus',
-  bgnkhhnnamicmpeenaelnjfhikgbkllg: 'AdGuard',
-};
-function pollutingExtensions() {
-  const dir = path.join(PROFILE, 'Default', 'Extensions');
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((id) => POLLUTING_EXT[id])
-    .map((id) => `${POLLUTING_EXT[id]}（${id}）`);
-}
 
 // Chrome 只有带 --remote-debugging-port 启动才会写这个文件；有它就能连上这个会话
 function devtoolsEndpoint() {
@@ -104,7 +91,8 @@ async function connectChrome() {
   throw new Error(`等调试专用 Chrome 起来超时（profile：${PROFILE}）`);
 }
 
-// Netscape cookie 文件 → Playwright cookie 数组（#HttpOnly_ 开头的行是数据，不能当注释丢掉）
+// Netscape cookie 文件 → Playwright cookie 数组（#HttpOnly_ 开头的行是数据，不能当注释丢掉）。
+// 顺带查文件本身：没有 linux.do 条目、或带过期时间的条目全过期了，直接抛错——省得起一次浏览器才发现
 function loadCookies() {
   if (!fs.existsSync(COOKIE_FILE))
     throw new Error(
@@ -114,7 +102,8 @@ function loadCookies() {
   const cookies = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
-    if (!line || (line.startsWith('#') && !line.startsWith('#HttpOnly_'))) continue;
+    if (!line || (line.startsWith('#') && !line.startsWith('#HttpOnly_')))
+      continue;
     const [domain, , cookiePath, secure, expires, name, value] = line
       .replace(/^#HttpOnly_/, '')
       .split('\t');
@@ -128,6 +117,17 @@ function loadCookies() {
       expires: Number(expires) > 0 ? Number(expires) : -1,
     });
   }
+  const site = cookies.filter((c) => /(^|\.)linux\.do$/.test(c.domain));
+  const now = Date.now() / 1000;
+  // 会话级 cookie（expires = -1）文件里看不出好坏，那种情况交给预热那次页面加载判
+  if (!site.length)
+    throw new Error(
+      `cookie 文件里没有 linux.do 的条目，请重新导出并覆盖 ${COOKIE_FILE}，我再重跑。`,
+    );
+  if (site.every((c) => c.expires > 0 && c.expires < now))
+    throw new Error(
+      `cookie 文件里 linux.do 的条目都已过期，请重新导出并覆盖 ${COOKIE_FILE}，我再重跑。`,
+    );
   return cookies;
 }
 
@@ -172,18 +172,21 @@ async function runSuite(page, name) {
     return false;
   }
   // 注入：同步 XHR 拉源码 + eval 必须落在 evaluate 的同步栈内，否则被站点 CSP 拦
-  await page.evaluate((spec) => {
-    const get = (url) => {
-      const x = new XMLHttpRequest();
-      x.open('GET', url, false);
-      x.send(null);
-      if (x.status !== 200) throw new Error('fetch fail ' + url);
-      return x.responseText;
-    };
-    window.__LKCB_SOURCE__ = get('http://127.0.0.1:8123/ld-blocker.user.js');
-    if (spec.mode) window.__LKCB_PERF_MODE__ = spec.mode; // perf 用它决定隐藏 / 淡化
-    (0, eval)(get('http://127.0.0.1:8123/' + spec.file));
-  }, { file: spec.file, mode: spec.mode || '' });
+  await page.evaluate(
+    (spec) => {
+      const get = (url) => {
+        const x = new XMLHttpRequest();
+        x.open('GET', url, false);
+        x.send(null);
+        if (x.status !== 200) throw new Error('fetch fail ' + url);
+        return x.responseText;
+      };
+      window.__LKCB_SOURCE__ = get('http://127.0.0.1:8123/ld-blocker.user.js');
+      if (spec.mode) window.__LKCB_PERF_MODE__ = spec.mode; // perf 用它决定隐藏 / 淡化
+      (0, eval)(get('http://127.0.0.1:8123/' + spec.file));
+    },
+    { file: spec.file, mode: spec.mode || '' },
+  );
 
   let report;
   try {
@@ -214,13 +217,15 @@ async function runSuite(page, name) {
 async function main() {
   const which = (process.argv[2] || 'both').toLowerCase();
   const names = EXPAND[which];
-  if (!names) throw new Error(`未知套件 ${which}，可用：console | spa | perf | both`);
+  if (!names)
+    throw new Error(`未知套件 ${which}，可用：console | spa | perf | both`);
 
   let server = null;
   let browser = null;
   let page = null;
   let allOk = true;
   try {
+    const cookies = loadCookies(); // 先查 cookie 文件：缺文件 / 没有 linux.do 条目 / 全过期，在这里就报
     try {
       server = await serve.start(serve.PORT, { quiet: true });
     } catch (e) {
@@ -228,18 +233,9 @@ async function main() {
       console.log(`[run] ${serve.PORT} 已被占用，复用已在跑的 serve`);
     }
     browser = await connectChrome();
-    // 专用 profile 里被装了干扰扩展就先停（Chrome 自带的组件扩展不算），别带着污染测
-    const exts = pollutingExtensions();
-    if (exts.length) {
-      console.log('\n❌ 测试专用 profile 里装了会干扰测量的扩展，先停下不测了：');
-      console.log('   ' + exts.join('、'));
-      console.log(`   把它们从 ${PROFILE} 里清掉，我再重跑。`);
-      process.exitCode = 1;
-      return;
-    }
     const context = browser.contexts()[0];
     if (!context) throw new Error('连上了 Chrome，但里面没有可用窗口');
-    await context.addCookies(loadCookies()); // 登录态以 linux.do_cookies.txt 为准，每次导入
+    await context.addCookies(cookies); // 登录态以 linux.do_cookies.txt 为准，每次导入
     // 复用 Chrome 启动时那个空白标签页，不另开：否则测完只关掉自己开的那个，会剩一个空白页
     page = context.pages()[0] || (await context.newPage());
     page.on('pageerror', (e) => pageLogs.push('pageerror: ' + e.message));
@@ -271,7 +267,9 @@ async function main() {
       allOk = (await runSuite(page, name)) && allOk;
     }
     console.log(
-      allOk ? '\n全部通过' : '\n有失败项，明细见上；完整结果在 tests/.last-result.json',
+      allOk
+        ? '\n全部通过'
+        : '\n有失败项，明细见上；完整结果在 tests/.last-result.json',
     );
     process.exitCode = allOk ? 0 : 1;
   } finally {

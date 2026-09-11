@@ -1,7 +1,7 @@
 /* eslint-disable */
 // 功能回归：登录门槛 / 面板开关（菜单命令、Ctrl+Q 开；Esc、×、遮罩关）/ 规则 CRUD /
-// 类别下拉（等级顺序、展开候选不撑高面板、拉不到时的提示与重试）/ 标签框增删与「无标签」收起 /
-// 匹配语义（类别精确、所有等级、标签精确、多标签 AND、无标签、标题包含、大小写不敏感、
+// 类别下拉（等级顺序、展开候选不撑高面板、拉不到时的提示与重试）/ 标签框增删与「零标签」收起 /
+// 匹配语义（类别精确、所有等级、标签精确、多标签 AND、零标签、标题包含、大小写不敏感、
 // 组合 AND、搜索页嵌套行）/ 启停 / 行内编辑 / 导入 / 存储损坏回退。自建 mock DOM 隔离运行，
 // 不依赖真实站点内容。
 // 由 tests/run.js 注入到专用 Chrome profile 页面里跑；结果挂 window.__lkcbTestResults
@@ -168,7 +168,7 @@
     await sleep(80);
   }
 
-  // 按界面路径添加一条规则：类别 + 标签（可多个，逗号分隔）+ 标题 + 无标签
+  // 按界面路径添加一条规则：类别 + 标签（可多个，逗号分隔）+ 标题 + 零标签
   async function addRule(categoryId, tags, title, opts = {}) {
     if (categoryId) await pickCategory(categoryId, opts.allLevels);
     else picker().querySelector('.lkcb-cat-clear').click();
@@ -371,7 +371,7 @@
     await addRule('', '   ', '');
     assert('三项全空不添加', chips().length === 0, JSON.stringify(chips()));
 
-    // ◆ 标签框：点「+」增设、上限 3、每框可 × 移除、无标签时整行收起
+    // ◆ 标签框：点「+」增设、上限 3、每框可 × 移除、零标签时整行收起
     assert(
       '标签框：默认 1 个且「+」可见，仅剩 1 个时不给删除按钮',
       tagBoxes().length === 1 &&
@@ -397,7 +397,7 @@
         tagBoxes().some((el) => el.value === '会被移除'),
       JSON.stringify(tagBoxes().map((el) => el.value)),
     );
-    // ◆ 「无标签」与标签框同一行；勾选后框与「+」收起、复选框本身保留
+    // ◆ 「零标签」与标签框同一行；勾选后框与「+」收起、复选框本身保留
     const noTagBox = addForm().querySelector('.lkcb-notag');
     const sameRow = !!noTagBox.closest('.lkcb-tags');
     noTagBox.checked = true;
@@ -417,7 +417,7 @@
       tagBoxes().every((el) => !el.hidden) &&
       !addForm().querySelector('.lkcb-tag-add').hidden;
     assert(
-      '标签框：勾选「无标签」框与「+」收起（复选框留在标签行），取消后恢复',
+      '标签框：勾选「零标签」框与「+」收起（复选框留在标签行），取消后恢复',
       sameRow && boxesHidden && addHidden && noTagVisible && restored,
       JSON.stringify({
         sameRow,
@@ -590,12 +590,12 @@
       JSON.stringify(st),
     );
 
-    // ◆ 匹配语义：无标签 / 组合 AND
+    // ◆ 匹配语义：零标签 / 组合 AND
     await clearRules();
     await addRule('', '', '', { noTag: true });
     st = mockStates();
     assert(
-      '无标签约束：只命中零标签帖',
+      '零标签约束：只命中不带标签的帖子',
       st[3] === 'hidden' &&
         st[5] === 'hidden' &&
         searchRow().dataset.lkcbState === 'hidden' &&
@@ -607,7 +607,7 @@
     await addRule('4', '', '', { allLevels: true, noTag: true });
     st = mockStates();
     assert(
-      '所有等级 + 无标签：只命中该大类各级的零标签帖',
+      '所有等级 + 零标签：只命中该大类各级的不带标签帖',
       st[5] === 'hidden' &&
         searchRow().dataset.lkcbState === 'hidden' &&
         st[1] !== 'hidden' &&
@@ -802,7 +802,7 @@
         chips()[0] === `类别:${cat11Name} + 标题:导入标题` &&
         chips()[1].includes('所有等级') &&
         chips()[2].includes('所有等级') &&
-        chips()[2].includes('无标签') &&
+        chips()[2].includes('零标签') &&
         rules()[1].classList.contains('lkcb-off'),
       JSON.stringify(chips()),
     );
