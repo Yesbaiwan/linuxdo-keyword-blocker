@@ -4,3 +4,8 @@
 
 # cookie
 linux.do_cookies.txt
+
+# 测试
+node_modules
+tests/.last-result.json
+tests/.chrome-profile/

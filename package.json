@@ -1,0 +1,16 @@
+{
+  "name": "linuxdo-keyword-blocker",
+  "version": "2.5.0",
+  "private": true,
+  "description": "Linux.do Keyword Blocker 的本地测试工具（脚本本体无构建、无依赖）",
+  "scripts": {
+    "test": "node tests/run.js both",
+    "test:console": "node tests/run.js console",
+    "test:spa": "node tests/run.js spa",
+    "test:perf": "node tests/run.js perf",
+    "serve": "node tests/serve.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

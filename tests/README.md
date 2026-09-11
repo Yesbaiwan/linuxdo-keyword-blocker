@@ -1,77 +1,49 @@
-# 测试运行手册（Chrome DevTools MCP）
+# 测试
 
-六套页内断言载荷由 chrome-devtools-mcp 控制真实 Chrome 在 linux.do 本站运行（2026-09 起为唯一测试环境）。
+三套断言载荷，跑在**测试专用 Chrome profile**（`tests/.chrome-profile`，已 gitignore）里，对已登录的 linux.do 页面执行：
 
-## 目录
+- [suites/console.js](suites/console.js)：功能回归，自建 mock DOM，不依赖站点内容，57 条。
+- [suites/spa.js](suites/spa.js)：真实信息流 + SPA 页内路由，点击站点导航标签切换列表，验证切换后过滤照常、无残留状态、零报错，11 条。
+- [suites/perf.js](suites/perf.js)：性能与抖动，加载 [fixtures/rules-sample.json](fixtures/rules-sample.json)（27 条真实规则集）并滚动加载多页，7 条断言 + 一行指标；**淡化 / 隐藏两种模式各跑一遍**（`perf-dim` / `perf-hide`）。
 
-```
-tests/
-├── serve.js                本地静态服务（node tests/serve.js，监听 127.0.0.1:8123）
-├── suites/                 页内断言载荷，由 MCP 注入页内 eval 运行
-│   ├── console.js          功能回归 34 项（自建 mock DOM，需含 #current-user）
-│   ├── rule-stress.js      规则匹配语义（17 条组合规则 + 影子匹配器逐行比对）
-│   ├── bulk-stress.js      97 词仅标题规则，压 UI 承载
-│   ├── performance.js      CLS / 隐藏延迟 / 长任务 / 滚动风暴 / 网络增量
-│   ├── spa.js              SPA 路由重建零闪现
-│   └── narrow-screen.js    窄屏深测（桌面 UA + 移动 UA 各一遍）
-└── fixtures/
-    ├── rule-stress.json    rule-stress 的 17 条规则（格式与脚本导出一致）
-    └── stress-keywords.txt bulk-stress 的 97 个关键词（逗号分隔）
+## 跑
+
+```powershell
+node tests/run.js          # 四跑（默认）
+node tests/run.js console  # 只跑功能
+node tests/run.js spa      # 只跑 SPA 路由
+node tests/run.js perf     # 只跑性能两模式
 ```
 
-## 环境前提
+不需要交互。run.js 自己起专用 Chrome、导入 `linux.do_cookies.txt` 当登录态、预热一轮、查环境是否干净，再逐套跑完并关掉页面。
 
-1. linux.do 已登录（未登录脚本不启动，断言零响应）；
-2. 浏览器**不得装有真实 Tampermonkey**（双实例互踩，结果不可信）；广告拦截类扩展会产生噪音，越少越好；
-3. 本地服务已启动：`node tests/serve.js`（页面用同步 XHR 从这里拉脚本与测试源码，保证 eval 在同步栈内）。
+**为什么不用日常 profile**：Chrome 136+ 只认非默认数据目录的调试端口，用日常 profile 起调试端口会弹窗要你点允许、也不被官方支持；而且日常 profile 里的油猴 / 广告拦截扩展会污染测量。
 
-## 注入模式（每套相同）
+## 输出
 
-1. 预置（如有）：视口模拟 → 刷新 → 等页面就绪（约 5s，30 行帖子出现）；
-2. 注入（一次 `evaluate_script`，函数体**纯同步、无 await**）：
+跑完终端只打一行摘要（全绿是 `✅ 套件：n/n 通过`），失败会把失败项与实际值一并列出；完整断言明细落盘 `tests/.last-result.json`（已 gitignore），只在需要复盘时才读。
 
-```js
-() => {
-  const get = (url) => {
-    const x = new XMLHttpRequest();
-    x.open('GET', url, false);
-    x.send(null);
-    if (x.status !== 200) throw new Error('fetch fail ' + url);
-    return x.responseText;
-  };
-  window.__LKCB_SOURCE__ = get('http://127.0.0.1:8123/ld-blocker.user.js');
-  // 部分套件另需前置变量（见下表）
-  (0, eval)(get('http://127.0.0.1:8123/tests/suites/<对应套件>.js'));
-  return 'started';
-};
-```
+## 不干净就停
 
-3. 轮询：短间隔多次 `evaluate_script` 读结果标志（每次 sleep ≤ 25s，工具级超时约 30s）。
+开测前会检查，命中就**直接停下、不做任何断言**、退出码 1，让你先处理：
 
-**CSP 硬约束**：脚本在每份文档只允许 eval 一次，且必须发生在 evaluate 的同步栈内；await 之后的定时器回调里 eval 会被站点 CSP（无 `unsafe-eval`）拦截。等待就绪的 sleep 放在独立的 evaluate 调用里。
+- 注入前页面里已经有脚本实例（真实油猴装着本脚本 → 双实例，结果不可信）；
+- 专用 profile 里装了会干扰测量的扩展：油猴 / 广告拦截（按扩展 ID 判定；Chrome 自带的组件扩展不算）。
 
-## 各套件差异
+## 两条硬约束
 
-| 套件             | 预置                                                        | 前置变量                                                    | 结果标志                                               |
-| ---------------- | ----------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
-| console.js       | 无                                                          | 无                                                          | `__lkcbTestResults`（`__lkcbTestsRunning` 为结束标志） |
-| rule-stress.js   | 刷新后停在 /latest                                          | `__LKCB_RULE_STRESS__` = rule-stress.json 原文              | `__lkcbRuleStressResults`                              |
-| bulk-stress.js   | 无                                                          | `__LKCB_STRESS_KEYWORDS__` = stress-keywords.txt 按逗号切分 | `__lkcbStressResults`                                  |
-| performance.js   | 刷新后停在 /latest                                          | 无                                                          | `__lkcbPerfResults`（附 `__lkcbPerfStage`）            |
-| spa.js           | 刷新后停在 /latest（页内自点路由标签）                      | 无                                                          | `__lkcbSpaResults`                                     |
-| narrow-screen.js | emulate 视口 → 刷新 → 运行；桌面/移动 UA 各一遍，测完清模拟 | 无                                                          | `__lkcbNarrowResults`                                  |
+- **CSP**：脚本每份文档只允许 eval 一次，且必须在 evaluate 的同步栈内；await 之后的定时器里 eval 会被站点 CSP 拦。所以套件源码用同步 XHR 从 [serve.js](serve.js)（由 run.js 内嵌启动，127.0.0.1:8123）拉，保持同步栈。
+- **预热**：perf 的量在**热页面**上（run.js 先空跑一轮）。冷缓存那次会被站点自身的加载 + hydration 拖着走，测的不是脚本。
 
-rule-stress 与 bulk-stress 分工：前者压匹配语义（影子匹配器独立重算每行期望，断言不依赖信息流内容），后者压 UI 承载。fixtures 分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=搞七捻三 Lv1）取自 2026-09 实测，站点改 ID 时需同步。
+## 判读
 
-## MCP 侧增强检查（按需，页内断言之外的第二层）
-
-- `list_console_messages` 过滤 error 并归因：gtm.js/chat 插件的 CSP eval 报错、`ERR_BLOCKED_BY_CLIENT`、Discourse 版本日志均属站点噪音；错误栈含 `lkcb` 或时间点对应注入才算脚本问题；
-- `list_network_requests` / `get_network_request`：核对数据接口请求与响应体；
-- `performance_start_trace` / `stop_trace`：浏览器级 Core Web Vitals（linux.do 加载超 10s，trace 用 reload:false + 手动交互）；
-- `take_screenshot`：面板/抽屉布局目检。
-
-## 清理
-
-- 每套测试自带 try/finally：还原 localStorage、移除注入面板、关闭菜单；
-- 跑完刷新页面一次（清掉 eval 注入实例与 data 属性残留）；
-- 用过的模拟视口记得清除。
+- 只看退出码和摘要行；失败项自带实际值，明细在 `.last-result.json`。
+- 首屏 CLS 在隐藏模式下偏高是正常的：隐藏会把命中的行从布局里摘掉、下方内容上移，是模式固有代价，不是抖动。
+- SPA 切换的 CLS 增量只报告 + 宽松兜底（≤0.05），站点自身重排也会产生位移。
+- 只断言「行为与过滤语义」与「脚本自身开销」：不测 CSS 像素；受外部环境影响的量（如「内容到达 → 状态落地」的延迟）只报告不判定。
+- 「零 JS 错误」只算脚本自己的错：`Script error.` 是跨域脚本（站点 CDN / Turnstile）的不透明报错，直接忽略；perf 另外包住 `handleAddedNodes` 捕获回调抛错。
+- 登录态来自 `linux.do_cookies.txt`，过期了重新导出一份即可。
+- **别连着跑回归**：linux.do 有限流，短时间反复刷新 / 导航可能被限速甚至封号。两次回归之间留间隔；调试优先 `node tests/run.js console`（自建 mock DOM，只导航一次）。
+- 偶发失败先怀疑环境（网络、页面没就绪、机器负载），重试再判断，不要给环境打补丁。
+- 写死的值只有分类「开发调优 = 4」「搞七捻三 = 11」；分类名与子分类 ID 都从类别树动态取。
+- 不做（用户明确无需或需人工）：导出下载、导入的系统文件选择框、真实登出、真实油猴环境冒烟。

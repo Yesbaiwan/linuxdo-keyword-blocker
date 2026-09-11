@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.4.2
+// @version      2.5.0
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
@@ -10,6 +10,7 @@
 // @updateURL    https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js
 // @grant        GM.getValue
 // @grant        GM.setValue
+// @grant        GM_registerMenuCommand
 // @run-at       document-idle
 // @license      MIT
 // ==/UserScript==
@@ -17,76 +18,53 @@
 (function () {
   'use strict';
 
-  // 幂等守卫：同文档重复注入（如测试时先 eval 本体又 eval 测试）会产生双实例
-  // 互踩渲染，第二次注入直接跳过
+  // 幂等守卫：同文档重复注入会产生双实例互踩渲染
   if (window.__lkcbLoaded) return;
   window.__lkcbLoaded = true;
 
   const STORAGE_KEY = 'linuxdo-keyword-blocker-settings';
-  // 站点类别树缓存：/site.json 体积大，缓存 7 天避免每次页面加载都拉
   const CATEGORY_CACHE_KEY = 'linuxdo-keyword-blocker-categories';
-  const CATEGORY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
-  // 缓存格式版本：格式变化时 +1 使旧缓存作废。v2 起读取时逐条校验
-  // id/name/parent 字段，旧版脚本写入的残缺树会直接被拒并重拉，
-  // 避免残缺 parent 把下拉缩进搞乱
-  const CATEGORY_CACHE_VERSION = 2;
-  // 每条规则 { category: number|null, tag: string, title: string, enabled: boolean }，
-  // 已填字段全部命中才算命中，至少填一项；enabled 是该规则的独立开关，
-  // 与总开关同时打开才参与匹配
-  const DEFAULT_SETTINGS = {
-    enabled: true,
-    rules: [],
-    // 默认淡化显示而非直接隐藏：帖子变暗但还在信息流里，误屏蔽可见可改；
-    // 已存过设置的用户保持自己的选择
-    hideMode: 'dim',
-  };
+  const CATEGORY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 站点类别树体积大，缓存 7 天
+  const MAX_TAGS = 3; // 单条规则的标签上限（每框一个，点「+」增设）
+  // 规则 { category, allLevels, tags, noTag, title, enabled }：已填字段全部命中才命中（AND），
+  // 至少填一项；allLevels 命中自身+全部等级后代，noTag 匹配零标签帖（与 tags 互斥）
+  const DEFAULT_SETTINGS = { enabled: true, rules: [], hideMode: 'dim' };
+
+  // 列表页行与搜索结果行；搜索结果里内层也带 topic-id，统一按最外层行处理
+  const TOPIC_SELECTORS =
+    '.fps-result, .latest-topic-list-item, .topic-list-item, [data-topic-id]';
+  // 标题取第一个非空文本；不能用逗号合并的 querySelector（置顶帖的空文本按钮在文档序上先于标题）
+  const TITLE_SELECTORS = ['.title', '.topic-title', "a[href^='/t/']"];
 
   let settings = { ...DEFAULT_SETTINGS };
   let observer = null;
-  // 「屏蔽规则」标签当前是否处于激活状态（头像菜单内容区切换到规则管理视图）
-  let rulesTabActive = false;
-
-  const TOPIC_SELECTORS = [
-    '.fps-result',
-    '.latest-topic-list-item',
-    '.topic-list-item',
-    '.topic-post',
-    '[data-topic-id]',
-  ].join(',');
-
-  // 标题提取按优先级逐个尝试：列表行是 .title，搜索结果是 .topic-title，
-  // 最后的 a[href^='/t/'] 兜底
-  const TITLE_SELECTORS = ['.title', '.topic-title', "a[href^='/t/']"];
-
-  // 登录后点击右上角头像出现的用户菜单；未登录时不存在，因此无入口
-  const USER_MENU_PANEL_SELECTOR = '.user-menu.menu-panel';
-  // 入口做成和「个人资料」同款的标签按钮，插在它下面（标签列最底部）
-  const PROFILE_TAB_ID = 'user-menu-button-profile';
-  const MENU_TABS_FALLBACK_SELECTOR =
-    '.user-menu.menu-panel .menu-tabs-container';
-  // 这些节点被移除意味着整个菜单面板被销毁（关闭）
-  const MENU_CLOSE_MARKERS =
-    '.user-menu.menu-panel, .user-menu-dropdown-wrapper';
+  let editingIndex = -1; // 正在展开编辑表单的规则下标（-1 = 无）
+  let editForm = null;
+  let addForm = null;
+  let activePicker = null; // 当前展开的类别下拉浮层，供面板滚动/窗口缩放时重新定位
+  let statusTimer = null;
+  let ready = false; // 类别树就绪前不落状态，否则同一行会被算两遍、页面上跳两次
+  let catTreeFailed = false; // 类别列表没拉到：面板里明确提示，别静默降级
 
   // ===== 类别树 =====
 
-  // byId: Map<id, {id, name, parent}>；children: Map<父 id, 子 id[]>
-  const catById = new Map();
-  const catChildren = new Map();
+  const catById = new Map(); // id → { id, name, parent }
+  const catChildren = new Map(); // 父 id → 子 id[]
   const catOrder = []; // 顶级分类 id，按展示顺序
 
   function buildCategoryIndex(cats) {
     catById.clear();
     catChildren.clear();
     catOrder.length = 0;
-    if (!cats || !cats.length) return;
-    for (const c of cats) {
-      const parent = c.parent == null ? null : Number(c.parent);
-      catById.set(c.id, { id: c.id, name: c.name, parent });
-    }
+    for (const c of cats)
+      catById.set(c.id, {
+        id: c.id,
+        name: c.name,
+        parent: c.parent == null ? null : Number(c.parent),
+      });
     for (const c of catById.values()) {
+      // 父分类不在可见列表（受限或已删除）时按顶级展示，保证不丢项
       if (c.parent == null || !catById.has(c.parent)) {
-        // 父分类不在可见列表（受限或已删除）时按顶级展示，保证不丢项
         c.parent = null;
         catOrder.push(c.id);
       } else {
@@ -97,153 +75,170 @@
     }
   }
 
-  // 下拉选项与规则胶囊共用的展示名：有子分类的分类追加「（不带等级）」——
-  // 选中它只命中直接发在该分类下的帖子（行徽章只带话题自身分类 ID），
-  // 避免误以为会屏蔽整个大类
-  function categoryName(id) {
+  // 下拉与规则行共用的展示名：有子分类的分类标注「（不带等级）」，避免被当成整个大类
+  function categoryName(id, allLevels) {
     const cat = catById.get(id);
     if (!cat) return String(id);
+    if (allLevels) return `${cat.name}（所有等级）`;
     return catChildren.get(id)?.length ? `${cat.name}（不带等级）` : cat.name;
   }
 
-  function escapeHtml(text) {
-    return String(text).replace(
-      /[&<>"']/g,
-      (ch) =>
-        ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;',
-          "'": '&#39;',
-        })[ch],
-    );
+  // 一个分类在列表里的条目：有子分类的给「所有等级」+「不带等级」两条，没有的只给裸名字
+  function categoryOptions(id) {
+    return catChildren.get(id)?.length
+      ? [
+          [categoryName(id, true), true],
+          [categoryName(id), false],
+        ]
+      : [[categoryName(id), false]];
   }
 
-  // 缓存优先（7 天）拉取站点完整类别树。失败时保持空索引：下拉仅剩
-  // 「不按类别筛选」，无法新增类别规则，标题/标签规则不受影响
+  // 类别框与标题框的宽度按最长选项撑开（含子分类缩进），不撑满整行：两者都是短文本
+  function syncFieldWidth() {
+    const panel = document.getElementById('lkcb-panel');
+    if (!panel || catById.size === 0) return;
+    const style = getComputedStyle(panel);
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    let widest = 0;
+    const walk = (id, depth) => {
+      for (const [name] of categoryOptions(id))
+        widest = Math.max(
+          widest,
+          ctx.measureText(name).width + 10 + depth * 16,
+        );
+      for (const childId of catChildren.get(id) || []) walk(childId, depth + 1);
+    };
+    for (const topId of catOrder) walk(topId, 0);
+    // 余量：输入框内边距 16 + 清除键与箭头 ≈24 + 边框留白
+    panel.style.setProperty('--lkcb-field-w', `${Math.ceil(widest) + 48}px`);
+  }
+
+  // 缓存优先（7 天）拉站点类别树；拉不到重试 3 次，仍失败就标记出来，在面板里提示并给重试入口
   async function loadCategoryTree() {
-    let loaded = false;
-    try {
-      const cached = await GM.getValue(CATEGORY_CACHE_KEY, null);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (
-          parsed?.v === CATEGORY_CACHE_VERSION &&
-          Array.isArray(parsed?.categories) &&
-          Date.now() - parsed.ts < CATEGORY_CACHE_TTL &&
-          // 逐条校验字段完整性，残缺树宁可重拉也不用
-          parsed.categories.every(
-            (c) =>
-              typeof c?.id === 'number' &&
-              typeof c?.name === 'string' &&
-              (c?.parent == null || typeof c.parent === 'number'),
-          )
-        ) {
-          buildCategoryIndex(parsed.categories);
-          loaded = true;
-        }
-      }
-    } catch (e) {
-      // 缓存损坏当作没有，走后续拉取
-    }
-    if (!loaded) {
+    catTreeFailed = false;
+    const cached = await GM.getValue(CATEGORY_CACHE_KEY, null);
+    if (cached) {
       try {
-        const res = await fetch('/site.json', {
-          headers: { Accept: 'application/json' },
-        });
-        if (!res.ok) throw new Error('site.json ' + res.status);
-        const data = await res.json();
-        const cats = (data?.categories || []).map((c) => ({
-          id: c.id,
-          name: c.name,
-          parent: c.parent_category_id ?? null,
-        }));
-        if (cats.length) {
-          buildCategoryIndex(cats);
-          loaded = true;
-          // 缓存写失败不影响本次会话，下次页面加载再拉
+        const { ts, categories } = JSON.parse(cached);
+        if (Date.now() - ts < CATEGORY_CACHE_TTL)
+          buildCategoryIndex(categories);
+      } catch {
+        /* 缓存损坏当作没有 */
+      }
+    }
+    if (catById.size === 0) {
+      for (let attempt = 1; attempt <= 3 && catById.size === 0; attempt++) {
+        try {
+          const res = await fetch('/site.json', {
+            headers: { Accept: 'application/json' },
+          });
+          if (!res.ok) throw new Error('site.json ' + res.status);
+          const data = await res.json();
+          buildCategoryIndex(
+            (data.categories || []).map((c) => ({
+              id: c.id,
+              name: c.name,
+              parent: c.parent_category_id ?? null,
+            })),
+          );
           GM.setValue(
             CATEGORY_CACHE_KEY,
             JSON.stringify({
-              v: CATEGORY_CACHE_VERSION,
               ts: Date.now(),
-              categories: cats,
+              categories: [...catById.values()],
             }),
           ).catch(() => {});
+        } catch {
+          if (attempt < 3)
+            await new Promise((r) => setTimeout(r, 800 * attempt));
         }
-      } catch (e) {
-        // 网络失败保持空索引，下次页面加载再试
       }
+      catTreeFailed = catById.size === 0;
     }
-    if (loaded) {
-      bumpMatchVersion();
-      scanTopics();
-      renderRulesTab();
-    }
+    bumpMatchVersion();
+    editingIndex = -1;
+    syncFieldWidth();
+    renderRules();
   }
 
-  // ===== storage =====
+  // ===== 存储 =====
 
   async function loadSettings() {
-    const stored = await GM.getValue(STORAGE_KEY, null);
     let parsed = {};
     try {
-      if (stored) parsed = JSON.parse(stored);
-    } catch (e) {
-      // 存储内容损坏时保持空对象，回退默认设置，别让整个脚本挂掉
-    }
-    // 旧版关键词存储迁移：每个关键词 ≈ 一条仅填标题的规则
-    if (!Array.isArray(parsed.rules) && Array.isArray(parsed.keywords)) {
-      parsed.rules = parsed.keywords.map((k) => ({
-        category: null,
-        tag: '',
-        title: String(k),
-      }));
-    }
-    // 处理模式只认两个已知值，其余（手改存储/未知格式）回退默认
-    if (parsed.hideMode !== 'hide' && parsed.hideMode !== 'dim') {
-      parsed.hideMode = DEFAULT_SETTINGS.hideMode;
+      parsed = JSON.parse(await GM.getValue(STORAGE_KEY, '{}')) || {};
+    } catch {
+      /* 存储损坏时回退默认设置 */
     }
     settings = {
-      ...DEFAULT_SETTINGS,
-      ...parsed,
+      enabled: parsed.enabled !== false,
+      hideMode: parsed.hideMode === 'hide' ? 'hide' : 'dim',
       rules: normalizeRules(parsed.rules),
     };
     bumpMatchVersion();
   }
 
-  async function saveSettings(patch) {
-    const next = { ...settings, ...patch };
-    next.rules = normalizeRules(next.rules);
-    settings = next;
+  // 设置变更统一入口：写存储、重算匹配缓存、重扫页面；rebuild 时重建列表（先复位编辑态）
+  async function updateSettings(patch, rebuild) {
+    if (rebuild) {
+      editingIndex = -1;
+      editForm = null;
+    }
+    settings = { ...settings, ...patch };
+    settings.rules = normalizeRules(settings.rules);
     bumpMatchVersion();
-    await GM.setValue(STORAGE_KEY, JSON.stringify(settings));
-    renderRulesTab();
+    if (rebuild) renderRules();
+    else renderStatus();
     scanTopics();
+    await GM.setValue(STORAGE_KEY, JSON.stringify(settings));
   }
 
-  // ===== matching =====
+  // ===== 匹配 =====
 
   function normalizeText(value) {
     return String(value || '').toLocaleLowerCase();
   }
 
+  // 每框一个标签（不切分逗号），去空并按上限截断
+  function normalizeTags(list) {
+    return list
+      .map((t) => String(t ?? '').trim())
+      .filter(Boolean)
+      .slice(0, MAX_TAGS);
+  }
+  // 规则至少填一项，全空视为无效
+  function isEmptyRule(rule) {
+    return (
+      rule.category == null &&
+      rule.tags.length === 0 &&
+      !rule.noTag &&
+      !rule.title
+    );
+  }
+
   function normalizeRules(rules) {
     const seen = new Set();
     const out = [];
-    for (const rule of rules || []) {
-      const raw = rule?.category;
-      let category = raw == null || raw === '' ? null : parseInt(raw, 10);
-      if (Number.isNaN(category)) category = null;
-      const tag = String(rule?.tag || '').trim();
-      const title = String(rule?.title || '').trim();
-      if (category == null && !tag && !title) continue;
-      const key = JSON.stringify([category, tag, title]);
+    for (const raw of rules || []) {
+      const parsed = parseInt(raw?.category, 10);
+      const category = Number.isNaN(parsed) ? null : parsed;
+      // 「无标签」与标签列表互斥，勾选 noTag 后不保留 tags
+      const noTag = !!raw?.noTag;
+      const rule = {
+        category,
+        // 不限等级只在选到类别时有意义（命中该分类自身 + 全部后代等级）
+        allLevels: category != null && !!raw?.allLevels,
+        tags: noTag ? [] : normalizeTags(raw?.tags || []),
+        noTag,
+        title: String(raw?.title || '').trim(),
+        enabled: raw?.enabled !== false,
+      };
+      if (isEmptyRule(rule)) continue;
+      const key = `${rule.category}|${rule.allLevels}|${rule.tags}|${rule.noTag}|${rule.title}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // enabled 缺省视为启用，旧版存储迁移无需补字段
-      out.push({ category, tag, title, enabled: rule?.enabled !== false });
+      out.push(rule);
     }
     return out;
   }
@@ -251,65 +246,69 @@
   function ruleLabel(rule) {
     const parts = [];
     if (rule.category != null)
-      parts.push('类别:' + categoryName(rule.category));
-    if (rule.tag) parts.push('标签:' + rule.tag);
+      parts.push('类别:' + categoryName(rule.category, rule.allLevels));
+    if (rule.noTag) parts.push('无标签');
+    else if (rule.tags.length) parts.push('标签:' + rule.tags.join('、'));
     if (rule.title) parts.push('标题:' + rule.title);
     return parts.join(' + ');
   }
 
-  // 规则匹配缓存，设置或类别树变更时重算。类别只存所选分类自身的徽章 ID：
-  // 帖子行徽章只带话题所属分类的 ID，选父分类就只命中直接发在父分类下的帖子
-  //（不带等级），不连带子分类。刻意不做「父分类连带全部子分类」：屏蔽某一级
-  // 就单独选那一级；整类屏蔽交给 Discourse 自带的分类静音，大范围屏蔽会让
-  // 信息流大量消失、站点不停加载新帖甚至触发限流
+  // 匹配规则缓存：类别存徽章 ID 集合，默认仅所选分类自身，「所有等级」扩展为自身+全部后代等级
   let matchVersion = 0;
   let ruleCache = [];
 
-  function rebuildRuleCache() {
-    // 停用的规则不参与匹配：总开关打开 且 规则自身勾选启用才生效
+  function collectLevelIds(id) {
+    const ids = new Set();
+    const stack = [id];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (ids.has(cur)) continue;
+      ids.add(cur);
+      stack.push(...(catChildren.get(cur) || []));
+    }
+    return ids;
+  }
+
+  function bumpMatchVersion() {
+    // 停用的规则不参与匹配：需总开关与规则自身开关同时打开
     ruleCache = settings.rules
       .filter((rule) => rule.enabled !== false)
       .map((rule) => ({
         label: ruleLabel(rule),
-        category: rule.category == null ? null : String(rule.category),
-        tag: normalizeText(rule.tag),
+        categoryIds:
+          rule.category == null
+            ? null
+            : (rule.allLevels
+                ? [...collectLevelIds(rule.category)]
+                : [rule.category]
+              ).map(String),
+        tags: rule.tags.map(normalizeText),
+        noTag: rule.noTag,
         title: normalizeText(rule.title),
       }));
-  }
-
-  function bumpMatchVersion() {
-    rebuildRuleCache();
     matchVersion++;
   }
 
-  // 匹配结果缓存：话题 id（或无 id 时的节点）→ 命中规则的展示文本，设置变更后整批失效
+  // 匹配结果缓存：话题 id（无 id 时按节点）→ 命中规则的展示文本，设置变更后整批失效
   const matchCache = new Map();
   const nodeMatchCache = new WeakMap();
 
-  // 按优先级逐个选择器取第一个非空文本。不能用逗号合并的 querySelector：
-  // 它按文档序返回第一个匹配——置顶帖的「置顶」切换按钮（空文本的 a）在文档序上
-  // 先于标题出现，会把标题顶掉，导致置顶帖永远无法按标题规则过滤。
-  function firstNonEmptyText(topic, selectors) {
-    for (const sel of selectors) {
-      const t = topic.querySelector(sel)?.textContent.trim();
-      if (t) return t;
+  // 标题取第一个非空文本并归一化（匹配一律大小写不敏感）
+  function topicTitle(topic) {
+    for (const sel of TITLE_SELECTORS) {
+      const text = topic.querySelector(sel)?.textContent.trim();
+      if (text) return normalizeText(text);
     }
     return '';
   }
 
-  // 类别只认徽章上的 data-category-id 数字：显示文字会随站点改版变，ID 不会；
-  // 且老版 Discourse 的 .category-name 类在本站根本不存在，按名字匹配必然落空。
-  // 子分类页面（如 /c/develop/develop-lv1/20）行内完全没有徽章，类别规则在该
-  // 场景天然不命中，标题/标签规则照常工作。
+  // 类别只认徽章上的 data-category-id；子分类页面行内无徽章，类别规则天然不命中
   function getTopicCategoryIds(topic) {
-    const set = new Set();
-    topic
-      .querySelectorAll('span.badge-category[data-category-id]')
-      .forEach((el) => {
-        const id = el.getAttribute('data-category-id');
-        if (id) set.add(id);
-      });
-    return set;
+    return new Set(
+      [...topic.querySelectorAll('span.badge-category[data-category-id]')]
+        .map((el) => el.getAttribute('data-category-id'))
+        .filter(Boolean),
+    );
   }
 
   function getTopicTags(topic) {
@@ -318,237 +317,259 @@
       .filter(Boolean);
   }
 
-  function findMatchedRule(topic, force) {
-    if (ruleCache.length === 0) return null;
-    const id = topic.dataset.topicId;
-    let entry = id ? matchCache.get(id) : nodeMatchCache.get(topic);
-    if (!force && entry && entry.v === matchVersion) return entry.rule;
+  // 已填字段必须全部命中：类别按徽章 ID 集合比对，标签全命中或要求零标签，标题包含匹配
+  function matchRule(title, catIds, tags) {
+    for (const cached of ruleCache) {
+      const cats = cached.categoryIds;
+      if (cats && ![...catIds].some((x) => cats.includes(x))) continue;
+      if (cached.noTag) {
+        if (tags.length) continue;
+      } else if (
+        cached.tags.length &&
+        !cached.tags.every((t) => tags.includes(t))
+      ) {
+        continue;
+      }
+      if (cached.title && !title.includes(cached.title)) continue;
+      return cached.label;
+    }
+    return null;
+  }
 
-    const title = normalizeText(firstNonEmptyText(topic, TITLE_SELECTORS));
+  // 缓存带内容指纹：标题/类别/标签任一变化就重算；骨架期算出的「不命中」也安全（内容填进来
+  // 指纹必然改变），未命中同样缓存，不必每次重算
+  function findMatchedRule(topic) {
+    if (ruleCache.length === 0) return null;
+    const title = topicTitle(topic);
     const catIds = getTopicCategoryIds(topic);
     const tags = getTopicTags(topic);
-    let rule = null;
-    for (const cached of ruleCache) {
-      // 规则内已填字段必须全部命中：类别按徽章 ID 精确比对（只认所选分类
-      // 本身），标签按文字精确匹配（子串不算），标题按包含匹配，大小写不敏感
-      if (cached.category != null && !catIds.has(cached.category)) continue;
-      if (cached.tag && !tags.some((tag) => tag === cached.tag)) continue;
-      if (cached.title && !title.includes(cached.title)) continue;
-      rule = cached.label;
-      break;
-    }
-    // 只缓存命中结果：站点会原地摘空行内容再填回（骨架期），此刻算出的
-    // 不命中只是中间态，落缓存会让后续重算永远吃到过期的 null
-    if (rule) {
-      entry = { v: matchVersion, rule };
-      if (id) matchCache.set(id, entry);
-      else nodeMatchCache.set(topic, entry);
+    const id = topic.dataset.topicId;
+    const sig = `${title}\u0001${[...catIds].sort().join(',')}\u0001${tags.join(',')}`;
+    const entry = id ? matchCache.get(id) : nodeMatchCache.get(topic);
+    if (entry && entry.v === matchVersion && entry.sig === sig)
+      return entry.rule;
+    const rule = matchRule(title, catIds, tags);
+    const hit = { v: matchVersion, sig, rule };
+    if (!id) nodeMatchCache.set(topic, hit);
+    else {
+      // 上限保护：长时间浏览会按 topicId 累积，超过阈值整批丢弃（重算很便宜）
+      if (matchCache.size >= 4000) matchCache.clear();
+      matchCache.set(id, hit);
     }
     return rule;
   }
 
-  // 状态存 data 属性而非 class：Discourse(Ember) 异步补数据时会重写行的 class，
-  // 注入的类会被抹掉导致帖子"闪回来"，data 属性则不受影响
+  // 状态存 data 属性而非 class：Ember 异步补数据会重写行的 class，注入的类会被抹掉。
+  // 值必须是 CSS 里的 hidden/dimmed，不能直接用 hideMode
   function applyTopicState(topic, matched) {
-    const active = settings.enabled;
-    const wantHidden = active && matched && settings.hideMode === 'hide';
-    const wantDimmed = active && matched && settings.hideMode === 'dim';
-    const state = wantHidden ? 'hidden' : wantDimmed ? 'dimmed' : null;
+    const hit = settings.enabled ? matched : null;
+    const hide = settings.hideMode === 'hide';
+    const state = hit ? (hide ? 'hidden' : 'dimmed') : null;
     if ((topic.dataset.lkcbState || null) === state) return;
-
     if (state) topic.dataset.lkcbState = state;
     else delete topic.dataset.lkcbState;
-    if (matched && active) topic.dataset.lkcbMatch = matched;
-    else topic.removeAttribute('data-lkcb-match');
   }
 
   // 嵌套命中的内层元素不应携带状态（插入竞态可能把状态打在内层上），清理残留
   function clearNestedState(topic) {
     topic
-      .querySelectorAll('[data-lkcb-state],[data-lkcb-match]')
-      .forEach((el) => {
-        el.removeAttribute('data-lkcb-state');
-        el.removeAttribute('data-lkcb-match');
-      });
+      .querySelectorAll('[data-lkcb-state]')
+      .forEach((el) => el.removeAttribute('data-lkcb-state'));
   }
 
   // 全量扫描：仅在初始化和设置变更时执行
   function scanTopics() {
-    document.querySelectorAll(TOPIC_SELECTORS).forEach((topic) => {
-      // 嵌套命中的内层元素不参与匹配，但要清理可能残留的状态
-      if (topic.parentElement?.closest(TOPIC_SELECTORS)) {
-        if (topic.dataset.lkcbState || topic.dataset.lkcbMatch) {
-          delete topic.dataset.lkcbState;
-          topic.removeAttribute('data-lkcb-match');
-        }
-        return;
-      }
-      applyTopicState(topic, findMatchedRule(topic));
-    });
+    for (const topic of document.querySelectorAll(TOPIC_SELECTORS)) {
+      if (topic.parentElement?.closest(TOPIC_SELECTORS)) staleClean(topic);
+      else applyTopicState(topic, findMatchedRule(topic));
+    }
   }
 
-  // ===== styles =====
+  // ===== 样式 =====
 
   function injectStyles() {
-    if (document.getElementById('lkcb-style')) return;
     const style = document.createElement('style');
     style.id = 'lkcb-style';
     // prettier-ignore
-    style.textContent = `[data-lkcb-state="hidden"] { display: none !important; }
-[data-lkcb-state="dimmed"] { opacity: 0.2 !important; }
-[data-lkcb-state="dimmed"]:hover { opacity: 0.8 !important; }
-#lkcb-menu-entry { width: 46px; height: 46px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--primary, #222222); }
-#lkcb-menu-entry:hover { color: var(--primary, #222222); }
-#lkcb-menu-entry.active { color: var(--tertiary, #0088cc); }
-#lkcb-menu-entry svg { pointer-events: none; }
-#lkcb-quick-access { display: none; padding: 12px; font-size: 14px; color: var(--primary, #222222); }
-.panel-body-contents[data-lkcb-view="rules"] .quick-access-panel:not(#lkcb-quick-access) { display: none !important; }
-.panel-body-contents[data-lkcb-view="rules"] #lkcb-quick-access { display: flex; flex-direction: column; justify-content: flex-start; max-height: 100%; overflow: hidden; }
-#lkcb-quick-access .lkcb-status { margin: 0 0 10px; font-size: 12px; color: var(--primary-medium, #919191); }
-#lkcb-quick-access .lkcb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-#lkcb-quick-access .lkcb-row label { font-size: 13px; white-space: nowrap; cursor: pointer; }
-#lkcb-quick-access .lkcb-grow { flex: 1; min-width: 0; }
-#lkcb-quick-access input[type="text"] { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); }
-#lkcb-quick-access input[type="text"]:focus { outline: 2px solid var(--tertiary, #0088cc); outline-offset: -1px; }
-#lkcb-quick-access select { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); }
-#lkcb-quick-access #lkcb-add { flex: 1; }
-#lkcb-quick-access .lkcb-cat-picker { min-width: 0; }
-#lkcb-quick-access .lkcb-row .lkcb-cat-picker { flex: 1; }
-#lkcb-quick-access .lkcb-cat-input-row { position: relative; display: flex; }
-#lkcb-quick-access .lkcb-cat-picker input { padding-right: 26px; }
-#lkcb-quick-access .lkcb-cat-clear { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); border: none; background: none; padding: 2px 8px; font-size: 14px; line-height: 1; color: var(--primary-medium, #919191); cursor: pointer; }
-#lkcb-quick-access .lkcb-cat-clear:hover { color: var(--danger, #ff5555); }
-#lkcb-quick-access .lkcb-cat-list { margin-top: 4px; max-height: 200px; overflow-y: auto; background: var(--secondary, #ffffff); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; }
-#lkcb-quick-access .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#lkcb-quick-access .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); }
-#lkcb-quick-access .lkcb-cat-item.lkcb-cat-none { color: var(--primary-medium, #919191); }
-#lkcb-quick-access ul.lkcb-rules { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
-#lkcb-quick-access ul.lkcb-rules li { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; }
-#lkcb-quick-access ul.lkcb-rules li.lkcb-editing { border-color: var(--tertiary, #0088cc); }
-#lkcb-quick-access .lkcb-rule-line { display: flex; align-items: flex-start; gap: 6px; }
-#lkcb-quick-access .lkcb-rule-text { flex: 1; min-width: 0; line-height: 1.5; word-break: break-word; }
-#lkcb-quick-access li.lkcb-off .lkcb-rule-text { opacity: 0.45; text-decoration: line-through; }
-#lkcb-quick-access .lkcb-rule-line input[type="checkbox"] { flex-shrink: 0; margin: 0; }
-#lkcb-quick-access .lkcb-rule-line button { flex-shrink: 0; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 12px; line-height: 1.5; cursor: pointer; }
-#lkcb-quick-access .lkcb-rule-line button.lkcb-edit:hover { color: var(--tertiary, #0088cc); }
-#lkcb-quick-access .lkcb-rule-line button.lkcb-remove { font-size: 14px; }
-#lkcb-quick-access .lkcb-rule-line button.lkcb-remove:hover { color: var(--danger, #ff5555); }
-#lkcb-quick-access .lkcb-rule-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--primary-low, #dddddd); }
-#lkcb-quick-access .lkcb-rule-edit .lkcb-row { margin-bottom: 0; }
-#lkcb-quick-access .lkcb-rule-edit .lkcb-save { flex: 1; }
-#lkcb-quick-access .lkcb-empty { margin-bottom: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; }
-#lkcb-quick-access .lkcb-footer { display: flex; justify-content: flex-end; gap: 6px; }`;
+    style.textContent = `/* 行状态 */ [data-lkcb-state="hidden"] { display: none !important; } [data-lkcb-state="dimmed"] { opacity: 0.2 !important; } [data-lkcb-state="dimmed"]:hover { opacity: 0.8 !important; }
+/* 遮罩与面板 */ #lkcb-overlay { position: fixed; inset: 0; z-index: 2147483000; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, 0.45); } #lkcb-overlay.lkcb-open { display: flex; }
+#lkcb-panel { --lkcb-field-w: 210px; display: flex; flex-direction: column; width: 540px; max-height: 100%; overflow: hidden; background: var(--secondary, #ffffff); color: var(--primary, #222222); border: 1px solid var(--primary-low, #dddddd); border-radius: 10px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35); font-size: 14px; } #lkcb-panel [hidden] { display: none !important; }
+/* 站点给 input/checkbox 的隐含外边距会把控件挤歪：面板内一律归零并统一高度 */
+#lkcb-panel input, #lkcb-panel select, #lkcb-panel button, #lkcb-panel label, #lkcb-panel ul, #lkcb-panel li { margin: 0; box-sizing: border-box; }
+#lkcb-panel input[type="text"], #lkcb-panel select { height: 32px; padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--secondary, #ffffff); color: var(--primary, #222222); } #lkcb-panel input[type="text"] { flex: 1; min-width: 0; } #lkcb-panel select { flex: none; width: fit-content; } #lkcb-panel input.lkcb-title { flex: 0 0 var(--lkcb-field-w); } #lkcb-panel input[type="text"]:focus { outline: 2px solid var(--tertiary, #0088cc); outline-offset: -1px; }
+/* 骨架 */ #lkcb-panel .lkcb-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--primary-low, #dddddd); flex-shrink: 0; } #lkcb-panel .lkcb-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; } #lkcb-panel .lkcb-footer { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--primary-low, #dddddd); flex-shrink: 0; }
+#lkcb-panel .lkcb-head { font-size: 15px; font-weight: 700; } #lkcb-panel .lkcb-status { flex: 1; min-width: 0; font-size: 12px; color: var(--primary-medium, #919191); text-align: right; }
+/* 字段行 */ #lkcb-panel .lkcb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; } #lkcb-panel .lkcb-row label { font-size: 13px; white-space: nowrap; cursor: pointer; } #lkcb-panel .lkcb-label { flex-shrink: 0; font-size: 13px; color: var(--primary-medium, #919191); } #lkcb-panel .lkcb-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+/* 无边框图标按钮：关闭 / 类别清除 / 类别箭头 / 标签 × */ #lkcb-panel #lkcb-close, #lkcb-panel .lkcb-cat-clear, #lkcb-panel .lkcb-cat-caret, #lkcb-panel .lkcb-tag-remove { flex-shrink: 0; border: none; background: none; padding: 0; line-height: 1; color: var(--primary-medium, #919191); cursor: pointer; }
+#lkcb-panel #lkcb-close { padding: 2px 8px; font-size: 18px; } #lkcb-panel .lkcb-cat-clear { font-size: 14px; } #lkcb-panel .lkcb-cat-caret { font-size: 10px; }
+#lkcb-panel #lkcb-close:hover, #lkcb-panel .lkcb-cat-clear:hover, #lkcb-panel .lkcb-tag-remove:hover { color: var(--danger, #ff5555); } #lkcb-panel .lkcb-cat-caret:hover { color: var(--primary, #222222); }
+/* 类别下拉：候选列表是 fixed 浮层，不参与面板布局 */ #lkcb-panel .lkcb-cat-picker { flex: 0 0 var(--lkcb-field-w); min-width: 0; } #lkcb-panel .lkcb-cat-input-row { display: flex; align-items: center; gap: 2px; } #lkcb-panel .lkcb-cat-input-row .lkcb-cat-input { flex: 1; min-width: 0; }
+#lkcb-panel .lkcb-cat-list { position: fixed; box-sizing: border-box; z-index: 5; max-height: 220px; overflow-y: auto; background: var(--secondary, #ffffff); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
+#lkcb-panel .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #lkcb-panel .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); } #lkcb-panel .lkcb-cat-none { color: var(--primary-medium, #919191); } #lkcb-panel .lkcb-cat-item[data-retry] { color: var(--danger, #ff5555); }
+/* 标签组：框 + 框内右侧 × + 添加按钮 + 「无标签」 */ #lkcb-panel .lkcb-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; } #lkcb-panel .lkcb-tag-box { position: relative; display: flex; align-items: center; flex: 0 1 108px; min-width: 0; } #lkcb-panel .lkcb-tag-box input[type="text"] { flex: 1; min-width: 0; padding-right: 22px; }
+#lkcb-panel .lkcb-tag-remove { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; font-size: 14px; }
+#lkcb-panel .lkcb-tag-add { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; background: none; color: var(--primary-medium, #919191); font-size: 16px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-tag-add:hover { color: var(--tertiary, #0088cc); border-color: var(--tertiary, #0088cc); }
+#lkcb-panel .lkcb-notag-label { display: flex; align-items: center; gap: 4px; flex-shrink: 0; white-space: nowrap; font-size: 13px; cursor: pointer; }
+/* 规则列表 */ #lkcb-panel ul.lkcb-rules { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px; } #lkcb-panel ul.lkcb-rules li { padding: 6px 8px; border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; background: var(--primary-very-low, #f8f8f8); font-size: 13px; } #lkcb-panel ul.lkcb-rules li.lkcb-editing { border-color: var(--tertiary, #0088cc); }
+#lkcb-panel .lkcb-rule-line { display: flex; align-items: center; gap: 6px; } #lkcb-panel .lkcb-rule-line input[type="checkbox"] { flex-shrink: 0; } #lkcb-panel .lkcb-rule-text { flex: 1; min-width: 0; line-height: 1.5; word-break: break-word; } #lkcb-panel li.lkcb-off .lkcb-rule-text { opacity: 0.45; text-decoration: line-through; }
+#lkcb-panel .lkcb-rule-line button { flex-shrink: 0; display: flex; align-items: center; justify-content: center; height: 20px; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 12px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-rule-line button.lkcb-edit:hover { color: var(--tertiary, #0088cc); } #lkcb-panel .lkcb-rule-line button.lkcb-remove { width: 18px; font-size: 14px; } #lkcb-panel .lkcb-rule-line button.lkcb-remove:hover { color: var(--danger, #ff5555); }
+#lkcb-panel .lkcb-rule-edit { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--primary-low, #dddddd); } #lkcb-panel .lkcb-rule-edit .lkcb-row { margin-bottom: 8px; } #lkcb-panel .lkcb-rule-edit .lkcb-row:last-child { margin-bottom: 0; }
+#lkcb-panel .lkcb-empty { margin-top: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; }`;
     document.documentElement.appendChild(style);
   }
 
-  // ===== 头像菜单内的规则管理视图 =====
+  // ===== 规则表单（添加与行内编辑共用） =====
 
-  // 构建菜单内容区里的管理界面：容器复用原生 quick-access-panel 类，
-  // 按钮复用 Discourse 的 btn/btn-primary/btn-default，颜色走主题变量，观感与原生一致。
-  // 类别选择用自带搜索的 picker（输入即过滤、点选即选中），不再单设搜索框
-  function buildRulesTab() {
-    const container = document.createElement('div');
-    container.id = 'lkcb-quick-access';
-    container.className = 'quick-access-panel';
-    // prettier-ignore
-    container.innerHTML = `<p id="lkcb-status" class="lkcb-status">正在读取设置</p>
-<div class="lkcb-row">
-    <input id="lkcb-enabled" type="checkbox" />
-    <label for="lkcb-enabled">启用屏蔽</label>
-    <select id="lkcb-hideMode" class="lkcb-grow">
-        <option value="dim">淡化显示</option>
-        <option value="hide">直接隐藏</option>
-    </select>
-</div>
-<div class="lkcb-row" id="lkcb-form-cat"></div>
-<div class="lkcb-row">
-    <input id="lkcb-rule-tag" type="text" autocomplete="off" placeholder="标签（精确匹配）" />
-    <input id="lkcb-rule-title" type="text" autocomplete="off" placeholder="标题（包含即命中）" />
-</div>
-<div class="lkcb-row">
-    <button id="lkcb-add" class="btn btn-primary" type="button">添加规则</button>
-</div>
-<ul id="lkcb-rules" class="lkcb-rules"></ul>
-<div id="lkcb-empty" class="lkcb-empty" hidden>还没有规则</div>
-<div class="lkcb-footer">
-    <button id="lkcb-export" class="btn btn-default" type="button">导出</button>
-    <button id="lkcb-clear" class="btn btn-default" type="button">清空</button>
-</div>`;
-    // 视图在 Discourse 菜单内部：不拦截的话，点击会被菜单委托当成菜单项路由走
-    //（实测点规则的 × 会跳到个人资料页），键盘输入会触发全局快捷键。
-    // 自身处理器绑定在子元素上，冒泡到容器时早已执行完毕，不受影响。
-    container.addEventListener('click', (event) => event.stopPropagation());
-    container.addEventListener('keydown', (event) => event.stopPropagation());
-    bindRulesTab(container);
-    return container;
+  function fieldRow(labelText) {
+    const row = document.createElement('div');
+    row.className = 'lkcb-row';
+    row.innerHTML = `<span class="lkcb-label">${labelText}</span>`; // 调用方只传固定文案
+    return row;
   }
 
-  // 可搜索类别选择器：输入即过滤、点选或回车即选中。搜索词是临时的——
-  // 失焦未选择则恢复原值，只有显式点选或点 × 清除才改变选中结果。
-  // 下拉是文档流内的内联展开（非浮层）：Discourse 菜单面板带 slide-in
-  // transform 动画，会劫持 fixed/absolute 浮层的定位与裁剪（fixed 下拉
-  // 实测弹不出来），内联展开零环境依赖
-  function createCategoryPicker(initialId, onChange) {
+  // 类别下拉 + 标签组 + 标题 + 无标签，添加与行内编辑共用同一套字段与排版，
+  // 差异只在调用方挂进 actions 的按钮
+  function createRuleForm(initial, onSubmit) {
+    const picker = createCategoryPicker(initial);
+    const tagsRow = fieldRow('标签');
+    const tags = createTagInputs(initial?.tags || [], tagsRow);
+    const title = document.createElement('input');
+    title.type = 'text';
+    title.className = 'lkcb-title';
+    title.autocomplete = 'off';
+    title.placeholder = '包含即命中';
+    title.value = initial?.title || '';
+    const noTag = document.createElement('input');
+    noTag.type = 'checkbox';
+    noTag.className = 'lkcb-notag';
+    noTag.checked = !!initial?.noTag;
+    tagsRow.insertAdjacentHTML(
+      'beforeend',
+      '<label class="lkcb-notag-label" title="只匹配不带任何标签的帖子；勾选后标签框全部收起，标签条件即「零标签」，可与类别、标题叠加">无标签</label>',
+    );
+    tagsRow.querySelector('.lkcb-notag-label').prepend(noTag);
+    // 勾选「无标签」= 标签条件换成「零标签」，标签框此时无意义，整组收起
+    const syncNoTag = () => tags.setBoxesHidden(noTag.checked);
+    noTag.addEventListener('change', syncNoTag);
+    syncNoTag();
+
+    const catRow = fieldRow('类别');
+    catRow.append(picker.root);
+    const titleRow = fieldRow('标题');
+    titleRow.append(title);
+    const actions = document.createElement('span');
+    actions.className = 'lkcb-actions';
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'lkcb-row';
+    actionsRow.append(actions);
+    const root = document.createElement('div');
+    root.append(catRow, tagsRow, titleRow, actionsRow);
+
+    // Enter 提交：只挂在标签组与标题上，避免与类别下拉的回车选中冲突
+    for (const el of [tags.root, title])
+      el.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        onSubmit();
+      });
+
+    return {
+      root,
+      actions,
+      title,
+      read: () => ({
+        category: picker.value.category,
+        allLevels: picker.value.allLevels,
+        tags: noTag.checked ? [] : tags.values,
+        noTag: noTag.checked,
+        title: title.value.trim(),
+      }),
+      reset() {
+        picker.reset();
+        tags.reset();
+        tags.setBoxesHidden(false);
+        noTag.checked = false;
+        title.value = '';
+      },
+    };
+  }
+
+  // 类别下拉：外观与普通下拉框一致（右侧箭头点击开合），但保留输入即过滤——
+  // 站点分类含各等级共 80+ 项，纯 select 翻找太累。搜索词是临时的，失焦未选择则
+  // 恢复原值，只有显式点选或点 × 清除才改变选中结果。
+  // 列表用 fixed 浮层挂在下拉框上下方，不参与面板布局（展开不撑高面板、不挤压表单）
+  function createCategoryPicker(initial) {
     const root = document.createElement('div');
     root.className = 'lkcb-cat-picker';
     // prettier-ignore
-    root.innerHTML = `<div class="lkcb-cat-input-row"><input class="lkcb-cat-input" type="text" autocomplete="off" placeholder="搜索或选择类别" />
-<button type="button" class="lkcb-cat-clear" title="清除已选类别" hidden>×</button></div>
+    root.innerHTML = `<div class="lkcb-cat-input-row"><input class="lkcb-cat-input" type="text" autocomplete="off" title="点击展开列表，可直接输入筛选" />
+<button type="button" class="lkcb-cat-clear" title="清除已选类别" hidden>×</button>
+<button type="button" class="lkcb-cat-caret" title="展开类别列表" aria-label="展开类别列表">▼</button></div>
 <div class="lkcb-cat-list" hidden></div>`;
     const input = root.querySelector('input');
     const clearBtn = root.querySelector('.lkcb-cat-clear');
+    const caret = root.querySelector('.lkcb-cat-caret');
     const list = root.querySelector('.lkcb-cat-list');
-    let selectedId = initialId == null ? null : Number(initialId);
+    // 选中值 { category, allLevels }：category 为分类自身徽章 ID，allLevels 表示
+    // 「所有等级」（自身+全部后代），仅对有子分类的父类提供
+    let selected =
+      initial?.category == null
+        ? { category: null, allLevels: false }
+        : {
+            category: Number(initial.category),
+            allLevels: !!initial.allLevels,
+          };
     let searching = false; // 正在输入搜索词（尚未确认选择）
 
-    function renderList(query) {
-      const q = normalizeText(query).trim();
-      const items = [
-        '<div class="lkcb-cat-item lkcb-cat-none" data-id="">不按类别筛选</div>',
-      ];
-      const walk = (id, depth) => {
-        const cat = catById.get(id);
-        if (!cat) return;
-        const name = categoryName(id);
-        if (!q || normalizeText(name).includes(q)) {
-          items.push(
-            `<div class="lkcb-cat-item" data-id="${cat.id}" style="padding-left:${10 + depth * 16}px">${escapeHtml(name)}</div>`,
-          );
-        }
-        for (const childId of catChildren.get(id) || [])
-          walk(childId, depth + 1);
-      };
-      for (const topId of catOrder) walk(topId, 0);
-      if (items.length === 1) {
-        items.push(
-          `<div class="lkcb-cat-item lkcb-cat-none">${catById.size ? '没有匹配的类别' : '类别列表不可用'}</div>`,
-        );
-      }
-      list.innerHTML = items.join('');
+    const isOpen = () => !list.hidden;
+    // 把浮层贴到输入框下方；下方空间不够且上方更宽裕时改为向上弹
+    function reposition() {
+      if (list.hidden) return;
+      const rect = input.getBoundingClientRect();
+      const gap = 4;
+      const below = window.innerHeight - rect.bottom - gap;
+      const above = rect.top - gap;
+      const openUp = below < 160 && above > below;
+      list.style.width = `${rect.width}px`;
+      list.style.left = `${Math.max(4, rect.left)}px`;
+      list.style.top = openUp ? 'auto' : `${rect.bottom + gap}px`;
+      list.style.bottom = openUp
+        ? `${window.innerHeight - rect.top + gap}px`
+        : 'auto';
+      list.style.maxHeight = `${Math.max(90, Math.min(220, openUp ? above : below))}px`;
     }
-
     function syncInput() {
-      input.value = selectedId == null ? '' : categoryName(selectedId);
-      clearBtn.hidden = selectedId == null;
+      input.value =
+        selected.category == null
+          ? ''
+          : categoryName(selected.category, selected.allLevels);
+      clearBtn.hidden = selected.category == null;
     }
-
     function openList() {
-      renderList(searching ? input.value : '');
+      renderCategoryOptions(list, searching ? input.value : '');
       list.hidden = false;
+      reposition();
+      activePicker = api;
     }
-
     function closeList() {
       list.hidden = true;
+      if (activePicker === api) activePicker = null;
       searching = false;
       syncInput();
     }
-
-    function choose(id) {
-      searching = false;
-      selectedId = id == null || id === '' ? null : Number(id);
-      closeList();
-      onChange?.(selectedId);
+    function choose(id, allLevels) {
+      selected =
+        id == null || id === ''
+          ? { category: null, allLevels: false }
+          : { category: Number(id), allLevels: !!allLevels };
+      closeList(); // 复位搜索态并回填输入框
     }
+    // 取要选中的项：item 为点击目标，缺省取第一个真实类别（回车确认）
+    const pick = (item) => {
+      const el =
+        item || list.querySelector('.lkcb-cat-item[data-id]:not([data-id=""])');
+      if (el) choose(el.dataset.id, el.dataset.allLevels === '1');
+    };
 
     input.addEventListener('focus', () => {
       input.select();
@@ -558,503 +579,443 @@
       searching = true;
       openList();
     });
-    // 阻止 mousedown 默认行为，避免点选项前输入框先失焦把下拉收起
-    list.addEventListener('mousedown', (e) => e.preventDefault());
-    list.addEventListener('click', (e) => {
-      const item = e.target.closest('.lkcb-cat-item');
-      if (item) choose(item.dataset.id);
-    });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        // 只收起下拉，不冒泡给面板级 Esc（避免误关整个面板）
+        e.stopPropagation();
         closeList();
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' && isOpen()) {
         e.preventDefault();
-        const first = list.querySelector('.lkcb-cat-item[data-id]');
-        if (first && !list.hidden) choose(first.dataset.id);
+        pick(null);
       }
     });
     input.addEventListener('blur', closeList);
-    clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    clearBtn.addEventListener('click', () => choose(null));
+    // 阻止 mousedown 默认行为，避免点选项前输入框先失焦把下拉收起
+    for (const el of [list, clearBtn, caret])
+      el.addEventListener('mousedown', (e) => e.preventDefault());
+    list.addEventListener('click', (e) => {
+      const item = e.target.closest('.lkcb-cat-item');
+      if (!item) return;
+      if (item.dataset.retry) {
+        // 拉取失败时下拉里给的补救入口：重新拉一次，再刷新候选
+        loadCategoryTree().then(openList);
+        return;
+      }
+      pick(item);
+    });
+    clearBtn.addEventListener('click', () => choose(null, false));
+    // 箭头与普通下拉的三角一致：点一下开、再点一下收
+    caret.addEventListener('click', () => {
+      if (isOpen()) closeList();
+      else {
+        input.focus();
+        openList();
+      }
+    });
 
     syncInput();
-    return {
+    const api = {
       root,
+      reposition,
       get value() {
-        return selectedId;
+        return { ...selected };
+      },
+      reset: () => choose(null, false),
+    };
+    return api;
+  }
+
+  // 缩进树形渲染类别下拉，按 query 过滤；父类额外给一条「（所有等级）」
+  function renderCategoryOptions(list, query) {
+    const q = normalizeText(query).trim();
+    const frag = document.createDocumentFragment();
+    const push = (id, name, depth, allLevels, retry) => {
+      if (q && !normalizeText(name).includes(q)) return;
+      const item = document.createElement('div');
+      item.className =
+        id === '' ? 'lkcb-cat-item lkcb-cat-none' : 'lkcb-cat-item';
+      if (allLevels) item.dataset.allLevels = '1';
+      if (retry) item.dataset.retry = '1';
+      item.dataset.id = id;
+      item.style.paddingLeft = `${10 + depth * 16}px`;
+      item.textContent = name;
+      frag.append(item);
+    };
+    // 有等级子分类的：先「所有等级」再「不带等级」，之后逐个等级；没有子分类的直接给裸名字
+    const walk = (id, depth) => {
+      for (const [name, allLevels] of categoryOptions(id))
+        push(id, name, depth, allLevels);
+      for (const childId of catChildren.get(id) || []) walk(childId, depth + 1);
+    };
+    push('', '不按类别筛选', 0, false);
+    for (const topId of catOrder) walk(topId, 0);
+    if (!catById.size)
+      push(
+        '',
+        catTreeFailed ? '类别列表没拉到，点此重试' : '类别列表不可用',
+        0,
+        false,
+        catTreeFailed,
+      );
+    else if (frag.childElementCount === 1) push('', '没有匹配的类别', 0, false);
+    list.replaceChildren(frag);
+  }
+
+  // 标签输入组：默认 1 个框，点「+」增设至多 MAX_TAGS 个，每个框可 × 移除
+  //（只剩 1 个框时不给 ×，避免整组被清空）。container 是所在行，整组随该行收起
+  function createTagInputs(initialTags, container) {
+    container.classList.add('lkcb-tags');
+    container.insertAdjacentHTML(
+      'beforeend',
+      `<button type="button" class="lkcb-tag-add" title="添加标签（最多 ${MAX_TAGS} 个）">+</button>`,
+    );
+    const add = container.querySelector('.lkcb-tag-add');
+    const boxes = () => [...container.querySelectorAll('.lkcb-tag-box')];
+    const values = () =>
+      normalizeTags(boxes().map((box) => box.querySelector('input').value));
+    let boxesHidden = false; // 「无标签」勾选时整组框收起（行内的复选框本身留着）
+    function syncControls() {
+      const count = boxes().length;
+      add.hidden = boxesHidden || count >= MAX_TAGS;
+      for (const box of boxes()) {
+        box.hidden = boxesHidden;
+        box.querySelector('.lkcb-tag-remove').hidden = count <= 1;
+      }
+    }
+    function appendBox(value = '') {
+      if (boxes().length >= MAX_TAGS) return null;
+      add.insertAdjacentHTML(
+        'beforebegin',
+        '<span class="lkcb-tag-box"><input type="text" autocomplete="off" class="lkcb-tag-input" title="标签需完全一致才命中（子串不命中）" /><button type="button" class="lkcb-tag-remove" title="移除该标签框">×</button></span>',
+      );
+      const box = add.previousElementSibling;
+      const input = box.querySelector('input');
+      input.value = value; // 用户数据只走 value，不进 HTML 模板
+      box.querySelector('.lkcb-tag-remove').addEventListener('click', () => {
+        box.remove();
+        syncControls();
+      });
+      syncControls();
+      return input;
+    }
+    add.addEventListener('click', () => appendBox()?.focus());
+
+    const seed = normalizeTags(initialTags);
+    (seed.length ? seed : ['']).forEach((tag) => appendBox(tag));
+
+    return {
+      root: container,
+      get values() {
+        return values();
       },
       reset() {
-        selectedId = null;
-        syncInput();
+        boxes().forEach((box) => box.remove());
+        appendBox();
+      },
+      setBoxesHidden(hidden) {
+        boxesHidden = hidden;
+        syncControls();
       },
     };
   }
 
-  // 行内编辑态：正在展开编辑表单的规则下标（-1 = 无）与其表单草稿。
-  // 草稿让重渲染（如勾选其他规则触发 saveSettings 全量重建列表）时
-  // 未保存的输入不丢失
-  let editingIndex = -1;
-  let editDraft = null;
+  // ===== 规则列表 =====
 
-  function startEdit(index) {
-    const rule = settings.rules[index];
-    if (!rule) return;
-    editingIndex = index;
-    editDraft = { category: rule.category, tag: rule.tag, title: rule.title };
-    renderRulesTab();
+  function ruleButton(text, className, handler) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = className;
+    btn.textContent = text;
+    btn.addEventListener('click', handler);
+    return btn;
   }
 
-  function cancelEdit() {
-    editingIndex = -1;
-    editDraft = null;
-    renderRulesTab();
-  }
-
-  async function saveEdit() {
-    const index = editingIndex;
-    const draft = editDraft;
-    if (index < 0 || !draft) return;
-    if (draft.category == null && !draft.tag.trim() && !draft.title.trim()) {
-      cancelEdit(); // 全空相当于取消
-      return;
-    }
-    editingIndex = -1;
-    editDraft = null;
-    const rules = [...settings.rules];
-    rules[index] = {
-      ...rules[index],
-      category: draft.category,
-      tag: draft.tag,
-      title: draft.title,
-    };
-    await saveSettings({ rules });
-  }
-
-  // 规则行：勾选启停 + 完整文本（换行显示不截断，停用画删除线）+ 编辑/删除。
-  // editing 为真时隐藏编辑按钮（该行已展开编辑表单）
-  function buildRuleRow(rule, index, editing = false) {
+  // 规则行：勾选启停 + 完整文本（停用画删除线）+ 编辑/删除；编辑表单挂在本行下方
+  function buildRuleRow(rule, index) {
     const li = document.createElement('li');
-    if (rule.enabled === false) li.classList.add('lkcb-off');
-    const line = document.createElement('div');
-    line.className = 'lkcb-rule-line';
-    const check = document.createElement('input');
-    check.type = 'checkbox';
+    li.classList.toggle('lkcb-off', rule.enabled === false);
+    // prettier-ignore
+    li.innerHTML = '<div class="lkcb-rule-line"><input type="checkbox" title="启用/停用该规则（需与总开关同时打开才生效）" /><span class="lkcb-rule-text"></span><button type="button" class="lkcb-edit" title="编辑该规则">编辑</button><button type="button" class="lkcb-remove" title="删除该规则">×</button></div>';
+    const [check, text, edit, remove] = li.firstElementChild.children;
     check.checked = rule.enabled !== false;
-    check.title = '启用/停用该规则（需与总开关同时打开才生效）';
-    check.setAttribute('aria-label', '启用该规则');
+    text.textContent = ruleLabel(rule); // 规则文本含用户输入，只走 textContent
+    edit.hidden = index === editingIndex;
     check.addEventListener('change', () => {
       const rules = [...settings.rules];
       rules[index] = { ...rules[index], enabled: check.checked };
-      saveSettings({ rules });
+      // 只改这一行：就地更新样式，不重建列表，展开中的编辑表单不受影响
+      li.classList.toggle('lkcb-off', !check.checked);
+      updateSettings({ rules }, false);
     });
-    const text = document.createElement('span');
-    text.className = 'lkcb-rule-text';
-    text.textContent = ruleLabel(rule);
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className = 'lkcb-edit';
-    editBtn.textContent = '编辑';
-    editBtn.title = '编辑该规则';
-    editBtn.hidden = editing;
-    editBtn.addEventListener('click', () => startEdit(index));
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'lkcb-remove';
-    remove.textContent = '×';
-    remove.title = '删除该规则';
-    remove.addEventListener('click', () => {
-      // 删除编辑中的规则要收起表单；删前面的规则要让编辑下标前移
-      if (editingIndex === index) {
-        editingIndex = -1;
-        editDraft = null;
-      } else if (editingIndex > index) {
-        editingIndex--;
-      }
-      saveSettings({ rules: settings.rules.filter((_, j) => j !== index) });
+    edit.addEventListener('click', () => {
+      editingIndex = index;
+      renderRules();
     });
-    line.append(check, text, editBtn, remove);
-    li.append(line);
-    return li;
-  }
-
-  // 编辑行：原行下方展开与添加同款的表单（类别 picker + 标签 + 标题），
-  // 保存原位替换、取消收起，都在本行完成，不再回填顶部表单
-  function buildEditingRow(rule, index) {
-    const li = document.createElement('li');
-    li.classList.add('lkcb-editing');
-    li.append(buildRuleRow(rule, index, true));
-    const form = document.createElement('div');
-    form.className = 'lkcb-rule-edit';
-    const picker = createCategoryPicker(editDraft.category, (value) => {
-      editDraft.category = value;
-    });
-    // 编辑表单的 tag/title/save/cancel 类名（lkcb-edit-tag 等）无样式作用，
-    // 是 console-tests 的定位钩子，勿清理
-    const tagInput = document.createElement('input');
-    tagInput.type = 'text';
-    tagInput.className = 'lkcb-edit-tag';
-    tagInput.placeholder = '标签（精确匹配）';
-    tagInput.value = editDraft.tag;
-    tagInput.addEventListener('input', () => {
-      editDraft.tag = tagInput.value;
-    });
-    const titleInput = document.createElement('input');
-    titleInput.type = 'text';
-    titleInput.className = 'lkcb-edit-title';
-    titleInput.placeholder = '标题（包含即命中）';
-    titleInput.value = editDraft.title;
-    titleInput.addEventListener('input', () => {
-      editDraft.title = titleInput.value;
-    });
-    const syncDraft = () => {
-      editDraft.tag = tagInput.value;
-      editDraft.title = titleInput.value;
-    };
-    for (const el of [tagInput, titleInput]) {
-      el.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          syncDraft();
-          saveEdit();
-        }
-      });
-    }
-    const tagRow = document.createElement('div');
-    tagRow.className = 'lkcb-row';
-    tagRow.append(tagInput, titleInput);
-    const save = document.createElement('button');
-    save.type = 'button';
-    save.className = 'btn btn-primary lkcb-save';
-    save.textContent = '保存修改';
-    save.addEventListener('click', () => {
-      syncDraft();
-      saveEdit();
-    });
-    const cancel = document.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn btn-default lkcb-cancel-edit';
-    cancel.textContent = '取消';
-    cancel.addEventListener('click', cancelEdit);
-    const btnRow = document.createElement('div');
-    btnRow.className = 'lkcb-row';
-    btnRow.append(save, cancel);
-    form.append(picker.root, tagRow, btnRow);
-    li.append(form);
-    return li;
-  }
-
-  function bindRulesTab(container) {
-    // 添加表单的类别选择器（行内编辑的 picker 在 buildEditingRow 里各自创建）
-    const picker = createCategoryPicker(null);
-    container.querySelector('#lkcb-form-cat').appendChild(picker.root);
-    const tag = container.querySelector('#lkcb-rule-tag');
-    const title = container.querySelector('#lkcb-rule-title');
-    const add = container.querySelector('#lkcb-add');
-    const enabled = container.querySelector('#lkcb-enabled');
-    const hideMode = container.querySelector('#lkcb-hideMode');
-    const clear = container.querySelector('#lkcb-clear');
-    const exportBtn = container.querySelector('#lkcb-export');
-
-    const submit = async () => {
-      const rule = {
-        category: picker.value,
-        tag: tag.value,
-        title: title.value,
+    remove.addEventListener('click', () =>
+      updateSettings(
+        { rules: settings.rules.filter((_, i) => i !== index) },
+        true,
+      ),
+    );
+    if (index === editingIndex) {
+      li.classList.add('lkcb-editing');
+      const saveEdit = () => {
+        const rules = [...settings.rules];
+        rules[index] = { ...rules[index], ...editForm.read() };
+        updateSettings({ rules }, true);
       };
-      // 至少填一项；全空时静默返回，由 normalizeRules 再兜底一次
-      if (rule.category == null && !rule.tag.trim() && !rule.title.trim())
-        return;
-      await saveSettings({ rules: [...settings.rules, rule] });
-      picker.reset();
-      tag.value = '';
-      title.value = '';
-      title.focus();
-    };
-
-    add.addEventListener('click', submit);
-    for (const input of [tag, title]) {
-      input.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          submit();
-        }
-      });
+      editForm = createRuleForm(rule, saveEdit);
+      editForm.root.classList.add('lkcb-rule-edit');
+      editForm.actions.append(
+        ruleButton('保存修改', 'btn btn-primary lkcb-save', saveEdit),
+        ruleButton('取消', 'btn btn-default lkcb-cancel-edit', () => {
+          editingIndex = -1;
+          renderRules();
+        }),
+      );
+      li.append(editForm.root);
     }
+    return li;
+  }
 
-    enabled.addEventListener('change', () => {
-      saveSettings({ enabled: enabled.checked });
-    });
+  function renderStatus() {
+    const total = settings.rules.length;
+    const active = settings.rules.filter((r) => r.enabled !== false).length;
+    const state = !settings.enabled
+      ? `已暂停，${total} 条规则`
+      : total === 0
+        ? '已启用，还没有规则'
+        : `已启用，${active}/${total} 条规则生效`;
+    document.getElementById('lkcb-status').textContent =
+      state + (catTreeFailed ? ' · 类别列表没拉到' : '');
+    document.getElementById('lkcb-enabled').checked = settings.enabled;
+    document.getElementById('lkcb-hideMode').value = settings.hideMode;
+  }
 
-    hideMode.addEventListener('change', () => {
-      saveSettings({ hideMode: hideMode.value });
-    });
+  // 一次性提示：短暂占用状态行（导入成功/失败），到时恢复常规状态文案
+  function flashStatus(text) {
+    clearTimeout(statusTimer);
+    document.getElementById('lkcb-status').textContent = text;
+    statusTimer = setTimeout(renderStatus, 2400);
+  }
 
-    clear.addEventListener('click', () => {
-      editingIndex = -1;
-      editDraft = null;
-      saveSettings({ rules: [] });
-    });
+  function renderRules() {
+    editForm = null;
+    const list = document.getElementById('lkcb-rules');
+    list.replaceChildren(...settings.rules.map(buildRuleRow));
+    document.getElementById('lkcb-empty').hidden = settings.rules.length > 0;
+    renderStatus();
+  }
 
-    exportBtn.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(settings.rules, null, 2)], {
-        type: 'application/json;charset=utf-8',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'linuxdo-rules.json';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+  // ===== 面板 =====
+
+  function buildPanel() {
+    const overlay = document.createElement('div');
+    overlay.id = 'lkcb-overlay';
+    // prettier-ignore
+    overlay.innerHTML = `<div id="lkcb-panel" role="dialog" aria-label="屏蔽规则">
+<div class="lkcb-header">
+    <span class="lkcb-head">屏蔽规则</span>
+    <span id="lkcb-status" class="lkcb-status">正在读取设置</span>
+    <button id="lkcb-close" type="button" title="关闭（Esc）">×</button>
+</div>
+<div class="lkcb-body">
+    <div class="lkcb-row">
+        <input id="lkcb-enabled" type="checkbox" />
+        <label for="lkcb-enabled">启用屏蔽</label>
+        <select id="lkcb-hideMode"><option value="dim">淡化显示</option><option value="hide">直接隐藏</option></select>
+    </div>
+    <ul id="lkcb-rules" class="lkcb-rules"></ul>
+    <div id="lkcb-empty" class="lkcb-empty" hidden>还没有规则</div>
+</div>
+<div class="lkcb-footer">
+    <button id="lkcb-import" class="btn btn-default" type="button" title="从 JSON 文件导入规则（替换当前全部规则）">导入</button>
+    <button id="lkcb-export" class="btn btn-default" type="button" title="把当前规则导出成 JSON 文件">导出</button>
+    <button id="lkcb-clear" class="btn btn-default" type="button">清空</button>
+</div>
+<input type="file" accept=".json,application/json" hidden />`;
+    document.body.appendChild(overlay);
+
+    const panel = overlay.querySelector('#lkcb-panel');
+    const body = panel.querySelector('.lkcb-body');
+    const on = (selector, event, handler) =>
+      panel.querySelector(selector).addEventListener(event, handler);
+
+    addForm = createRuleForm(null, addRule);
+    addForm.root.id = 'lkcb-add-form';
+    const addBtn = ruleButton('添加规则', 'btn btn-primary', addRule);
+    addBtn.id = 'lkcb-add';
+    addForm.actions.append(addBtn);
+    body.insertBefore(addForm.root, panel.querySelector('#lkcb-rules'));
+
+    on('#lkcb-close', 'click', closePanel);
+    on('#lkcb-enabled', 'change', (e) =>
+      updateSettings({ enabled: e.target.checked }, false),
+    );
+    on('#lkcb-hideMode', 'change', (e) =>
+      updateSettings({ hideMode: e.target.value }, false),
+    );
+    on('#lkcb-clear', 'click', () => updateSettings({ rules: [] }, true));
+    on('#lkcb-export', 'click', () => {
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(settings.rules, null, 2)], {
+          type: 'application/json;charset=utf-8',
+        }),
+      );
+      Object.assign(document.createElement('a'), {
+        href: url,
+        download: 'linuxdo-rules.json',
+      }).click();
       URL.revokeObjectURL(url);
     });
-  }
-
-  // 渲染管理视图（悬浮面板已移除，仅菜单内唯一实例；target 供激活时定向渲染）。
-  // 只刷新状态行与规则列表；添加表单（含 picker）由 buildRulesTab 一次创建，
-  // 编辑表单随行重建、值从 editDraft 恢复
-  function renderRulesTab(target) {
-    const container = target || document.querySelector('#lkcb-quick-access');
-    if (!container) return;
-    // 编辑中的规则可能已被删除（列表重建/清空），越界即收起编辑表单
-    if (editingIndex >= settings.rules.length) {
-      editingIndex = -1;
-      editDraft = null;
-    }
-    const status = container.querySelector('#lkcb-status');
-    const enabled = container.querySelector('#lkcb-enabled');
-    const hideMode = container.querySelector('#lkcb-hideMode');
-    const list = container.querySelector('#lkcb-rules');
-    const empty = container.querySelector('#lkcb-empty');
-
-    const total = settings.rules.length;
-    const activeCount = settings.rules.filter(
-      (rule) => rule.enabled !== false,
-    ).length;
-    let statusText;
-    if (!settings.enabled) statusText = `已暂停，${total} 条规则`;
-    else if (total === 0) statusText = '已启用，还没有规则';
-    else statusText = `已启用，${activeCount}/${total} 条规则生效`;
-    status.textContent = statusText;
-    enabled.checked = settings.enabled;
-    hideMode.value = settings.hideMode;
-
-    list.replaceChildren();
-    settings.rules.forEach((rule, i) => {
-      list.append(
-        i === editingIndex ? buildEditingRow(rule, i) : buildRuleRow(rule, i),
-      );
-    });
-    empty.hidden = total > 0;
-  }
-
-  // 「屏蔽规则」标签激活：隐藏原生内容区（打在 panel-body-contents 的 data 属性上，
-  // 与帖子行同理，Ember 重写 class 不影响），显示规则管理视图
-  function activateRulesView() {
-    rulesTabActive = true;
-    const contents = document.querySelector(
-      '.user-menu.menu-panel .panel-body-contents',
-    );
-    if (!contents) return;
-    let view = contents.querySelector('#lkcb-quick-access');
-    if (!view) {
-      view = buildRulesTab();
-      contents.appendChild(view);
-    }
-    contents.dataset.lkcbView = 'rules';
-    // active 态与原生标签切换保持一致：自己点亮，其余熄灭
-    contents.querySelectorAll('.user-menu-tab.active').forEach((tab) => {
-      if (tab.id !== 'lkcb-menu-entry') tab.classList.remove('active');
-    });
-    document.getElementById('lkcb-menu-entry')?.classList.add('active');
-    renderRulesTab(view);
-  }
-
-  // 切回原生标签视图（点任意原生标签时调用）
-  function deactivateRulesView() {
-    rulesTabActive = false;
-    const contents = document.querySelector(
-      '.user-menu.menu-panel .panel-body-contents',
-    );
-    if (!contents) return;
-    delete contents.dataset.lkcbView;
-    document.getElementById('lkcb-menu-entry')?.classList.remove('active');
-  }
-
-  // Ember 可能异步重渲染菜单内容（如通知轮询），此时重建视图并恢复激活态
-  function assertRulesView(node) {
-    if (!rulesTabActive) return;
-    // 只关心菜单内部的变更
-    if (!node.closest('.user-menu.menu-panel')) return;
-    const contents = document.querySelector(
-      '.user-menu.menu-panel .panel-body-contents',
-    );
-    if (!contents) return;
-    const view = contents.querySelector('#lkcb-quick-access');
-    if (!view || !contents.dataset.lkcbView) {
-      activateRulesView();
-    }
-  }
-
-  // ===== 头像菜单入口 =====
-
-  // Discourse 每次打开头像菜单都会重新渲染整个面板（关闭即销毁），
-  // 因此靠 MutationObserver 在面板出现时同步注入入口，销毁随面板走，无需清理
-  function injectMenuEntry() {
-    if (document.getElementById('lkcb-menu-entry')) return;
-    // 标签按钮 id 全局唯一，直接定位插入点；不依赖面板选择器的文档顺序
-    //（li#current-user 关闭时也带 user-menu-panel 类，querySelector 可能命中它）
-    const profileTab = document.getElementById(PROFILE_TAB_ID);
-    const tabsList =
-      profileTab?.parentElement ||
-      document.querySelector(MENU_TABS_FALLBACK_SELECTOR);
-    if (!tabsList) return;
-
-    const button = document.createElement('button');
-    button.id = 'lkcb-menu-entry';
-    // 复用 Discourse 标签按钮的类，外观与「个人资料」等保持一致
-    button.className = 'btn btn-flat btn-icon no-text user-menu-tab';
-    button.type = 'button';
-    button.title = '屏蔽规则';
-    button.setAttribute('aria-label', '屏蔽规则');
-    // prettier-ignore
-    button.innerHTML = `<svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true"><path fill="currentColor" d="M3 4h18l-7 8.5V20l-4 2.5v-10z"/></svg>`;
-    button.addEventListener('click', (event) => {
-      // 不让事件冒泡给 Discourse，避免被当成标签切换处理
-      event.stopPropagation();
-      activateRulesView();
-    });
-    if (profileTab) profileTab.insertAdjacentElement('afterend', button);
-    else tabsList.appendChild(button);
-  }
-
-  // 新增节点里出现用户菜单面板时立即注入（同步于绘制前，无闪烁）
-  function watchForMenuPanel(node) {
-    if (
-      node.matches(USER_MENU_PANEL_SELECTOR) ||
-      node.querySelector(USER_MENU_PANEL_SELECTOR)
-    ) {
-      injectMenuEntry();
-    }
-  }
-
-  // ===== observer & init =====
-
-  function startObserver() {
-    // 原生标签分属 top-tabs / bottom-tabs 两组容器，且面板每次打开都重建，
-    // 所以在 document 上挂一个捕获监听统一处理「点原生标签 → 切回原生视图」，
-    // 不随面板销毁重建，也覆盖两组标签
-    document.addEventListener(
-      'click',
-      (event) => {
-        if (!rulesTabActive) return;
-        const tab = event.target?.closest?.('.user-menu-tab');
-        if (tab && tab.id !== 'lkcb-menu-entry') deactivateRulesView();
-      },
-      true,
-    );
-    if (observer) observer.disconnect();
-    observer = new MutationObserver((mutations) => {
-      // 菜单关闭时 Discourse 销毁整个面板；复位标签状态，
-      // 保证重开菜单时回到原生默认视图（与原生行为一致）
-      for (const mutation of mutations) {
-        for (const node of mutation.removedNodes) {
-          if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          if (
-            node.matches?.(MENU_CLOSE_MARKERS) ||
-            node.querySelector?.('#lkcb-menu-entry')
-          ) {
-            rulesTabActive = false;
-            // 编辑态随视图销毁复位，避免重开后残留半成品表单
-            editingIndex = -1;
-            editDraft = null;
-          }
-        }
+    // 导入：与导出的 JSON 同格式（规则数组），复用存储那套归一化与去重
+    const fileInput = overlay.querySelector('input[type="file"]');
+    on('#lkcb-import', 'click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      fileInput.value = ''; // 清掉选中值，同一个文件可以反复导入
+      if (!file) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch (e) {
+        return flashStatus('导入失败：不是合法的 JSON 文件');
       }
-      handleAddedNodes(mutations);
+      const rules = normalizeRules(parsed);
+      if (!rules.length) return flashStatus('导入失败：文件里没有有效规则');
+      updateSettings({ rules }, true);
+      flashStatus(`已导入 ${rules.length} 条规则`);
     });
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    // 面板内容滚动 / 窗口缩放时让类别下拉浮层跟随输入框
+    body.addEventListener('scroll', () => activePicker?.reposition());
+    window.addEventListener('resize', () => activePicker?.reposition());
+    renderRules();
   }
 
-  // 新增行在浏览器绘制前同步处理，避免"先显示后隐藏"的闪现与跳动
+  function addRule() {
+    const rule = addForm.read();
+    if (isEmptyRule(rule)) return; // 至少填一项
+    updateSettings({ rules: [...settings.rules, rule] }, true);
+    addForm.reset();
+    addForm.title.focus();
+  }
+
+  const overlayEl = () => document.getElementById('lkcb-overlay');
+  const isPanelOpen = () => !!overlayEl()?.classList.contains('lkcb-open');
+
+  const openPanel = () => overlayEl()?.classList.add('lkcb-open');
+
+  // 关闭即复位编辑态（展开中的编辑表单会随列表重建丢弃）
+  function closePanel() {
+    if (!isPanelOpen()) return;
+    overlayEl().classList.remove('lkcb-open');
+    editingIndex = -1;
+    renderRules();
+  }
+
+  const togglePanel = () => (isPanelOpen() ? closePanel() : openPanel());
+
+  // Ctrl+Q 切换面板，Esc / 点遮罩空白关闭；油猴菜单命令兜底
+  function registerShortcuts() {
+    document.addEventListener('keydown', (event) => {
+      const isToggle =
+        event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        event.key.toLowerCase() === 'q';
+      if (isToggle) {
+        event.preventDefault();
+        togglePanel();
+      } else if (event.key === 'Escape') closePanel();
+    });
+    overlayEl().addEventListener('click', (event) => {
+      if (event.target.id === 'lkcb-overlay') closePanel();
+    });
+    if (typeof GM_registerMenuCommand === 'function')
+      GM_registerMenuCommand('屏蔽规则（Ctrl+Q）', openPanel);
+  }
+
+  // ===== 观察器 =====
+
+  // 从任意节点向上找到最外层行（搜索结果里内层也带 topic-id）
+  function outermostRow(el) {
+    let host = el.parentElement?.closest(TOPIC_SELECTORS);
+    while (host) {
+      const outer = host.parentElement?.closest(TOPIC_SELECTORS);
+      if (!outer) return host;
+      host = outer;
+    }
+    return null;
+  }
+
+  // 清掉元素自身与后代上残留的状态（Ember 会回收复用行节点）
+  const staleClean = (el) => {
+    el.removeAttribute('data-lkcb-state');
+    clearNestedState(el);
+  };
+
+  // 新增行在浏览器绘制前同步处理，避免「先显示后隐藏」的闪现与跳动。
+  // 站点填一行内容是「骨架 → 标题 → 徽章 → 图片」分多次插入，同一批 mutation 里同一行
+  // 会被反复触及，所以先按行收集去重，批次末尾每行只判定一次（内容没变的行由指纹缓存复用）
   function handleAddedNodes(mutations) {
+    if (!ready) return; // 类别树未就绪时先不落状态，避免算两遍造成页面跳两次
     const active = settings.enabled && ruleCache.length > 0;
+    const rows = new Set(); // 需要判定的最外层行
+    const nested = new Set(); // 需要清掉残留状态的嵌套行
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
-        // 站点填回行内容（如标题）用的是插入文本节点，只认元素节点会漏算
-        if (
-          node.nodeType !== Node.ELEMENT_NODE &&
-          node.nodeType !== Node.TEXT_NODE
-        )
+        // 站点填标题/数字用的是文本节点：只提升宿主行，不必查后代（文本没有后代）
+        if (node.nodeType === Node.TEXT_NODE) {
+          const host = node.parentElement && outermostRow(node.parentElement);
+          if (host) rows.add(host);
           continue;
-        const el =
-          node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-        if (!el) continue;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const el = node;
         // 自身 UI 跳过：观察器不处理 lkcb- 前缀节点，避免自我触发
         if (el.id.startsWith('lkcb-')) continue;
-        assertRulesView(el);
-        watchForMenuPanel(el);
         if (!active) {
-          // 屏蔽关闭时，清掉 Ember 回收复用节点上可能残留的旧状态
-          el.removeAttribute('data-lkcb-state');
-          el.removeAttribute('data-lkcb-match');
-          el.querySelectorAll('[data-lkcb-state],[data-lkcb-match]').forEach(
-            (n) => {
-              n.removeAttribute('data-lkcb-state');
-              n.removeAttribute('data-lkcb-match');
-            },
-          );
+          staleClean(el);
           continue;
         }
         if (el.matches(TOPIC_SELECTORS)) {
           // 未挂载的节点父链不完整，可能被误判为最外层行；等挂载时随子树统一处理
-          if (el.isConnected && !el.parentElement?.closest(TOPIC_SELECTORS)) {
-            applyTopicState(el, findMatchedRule(el, true));
-            clearNestedState(el);
-          }
+          if (el.parentElement?.closest(TOPIC_SELECTORS)) nested.add(el);
+          else if (el.isConnected) rows.add(el);
           continue;
         }
-        const descendants = el.querySelectorAll(TOPIC_SELECTORS);
-        if (descendants.length === 0) {
-          // 行内容通常是骨架先插入、文本后填充；带文本的节点才可能改变匹配结果
-          if (!el.textContent.trim()) continue;
-        }
-        // 所属行内容已变化，强制重算（绕过按 topicId 的缓存）
-        // 提升到最外层命中元素：搜索结果等场景下内层 [data-topic-id] 也符合选择器，
-        // 直接用会把状态打在内层上
-        let host = el.parentElement?.closest(TOPIC_SELECTORS);
-        if (host) {
-          let outer = host.parentElement?.closest(TOPIC_SELECTORS);
-          while (outer) {
-            host = outer;
-            outer = host.parentElement?.closest(TOPIC_SELECTORS);
-          }
-          applyTopicState(host, findMatchedRule(host, true));
-          clearNestedState(host);
-        }
-        for (const row of descendants) {
-          if (row.parentElement?.closest(TOPIC_SELECTORS)) {
-            clearNestedState(row);
-            continue;
-          }
-          applyTopicState(row, findMatchedRule(row));
+        // 所属行内容已变化。这里不读 el.textContent：大容器上会遍历整棵子树，代价太高；
+        // 被顺带触及但内容没变的行由指纹缓存直接命中，不会白算
+        const host = outermostRow(el);
+        if (host) rows.add(host);
+        for (const row of el.querySelectorAll(TOPIC_SELECTORS)) {
+          if (row.parentElement?.closest(TOPIC_SELECTORS)) nested.add(row);
+          else rows.add(row);
         }
       }
     }
+    for (const row of nested) {
+      staleClean(row);
+      rows.delete(row);
+    }
+    for (const row of rows) {
+      applyTopicState(row, findMatchedRule(row));
+      clearNestedState(row);
+    }
   }
 
-  // ===== 强制登录 =====
-
-  // 登录后 Discourse 头部才存在 #current-user（头像按钮容器，本站实测）。
-  // 未登录时脚本完全不工作：不过滤、不注入任何 UI
-  function isLoggedIn() {
-    return !!document.getElementById('current-user');
+  function startObserver() {
+    if (observer) observer.disconnect();
+    observer = new MutationObserver(handleAddedNodes);
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  // 未登录时挂观察器等登录（SPA 登录不刷新页面），头部出现 #current-user 即启动
+  // ===== 启动 =====
+
+  // 登录后头部才存在 #current-user（本站实测）。未登录时不过滤、不注入任何 UI
+  const isLoggedIn = () => !!document.getElementById('current-user');
+
+  // 未登录时挂观察器等登录（SPA 登录不刷新页面）
   function waitForLogin() {
     const watcher = new MutationObserver(() => {
       if (isLoggedIn()) {
@@ -1075,10 +1036,15 @@
     }
     injectStyles();
     await loadSettings();
-    injectMenuEntry();
-    scanTopics();
+    buildPanel();
+    registerShortcuts();
     startObserver();
-    loadCategoryTree();
+    // 只有「所有等级」规则依赖类别树：没有这类规则就先就绪、立刻过滤；否则等树到齐
+    // 再统一判定一次，避免同一行先按不完整的分类集合算一遍、树到了又跳一次
+    ready = !settings.rules.some((rule) => rule.allLevels);
+    await loadCategoryTree();
+    ready = true;
+    scanTopics();
   }
 
   init();

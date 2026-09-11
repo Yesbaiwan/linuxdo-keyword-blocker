@@ -1,0 +1,218 @@
+[
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "抽奖",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "灌水",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "签到",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "邀请码",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "注册送",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "试运营",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "免费领",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "求赞",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "熬夜大赛",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["NSFW"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["美女"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["高级推广"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["订阅节点"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["纯水", "病友"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": ["纯水", "快问快答"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 11,
+    "allLevels": true,
+    "tags": [],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 11,
+    "allLevels": false,
+    "tags": ["纯水"],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 36,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 106,
+    "allLevels": true,
+    "tags": [],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 34,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 30,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 11,
+    "allLevels": true,
+    "tags": [],
+    "noTag": true,
+    "title": "",
+    "enabled": true
+  },
+  {
+    "category": 14,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "求",
+    "enabled": true
+  },
+  {
+    "category": 4,
+    "allLevels": false,
+    "tags": ["人工智能"],
+    "noTag": false,
+    "title": "20x",
+    "enabled": true
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": false,
+    "title": "C++ 与 C#：编译期 <模板> 的坑 & \"引用\"",
+    "enabled": false
+  },
+  {
+    "category": 999,
+    "allLevels": false,
+    "tags": ["不存在的标签"],
+    "noTag": false,
+    "title": "分类不存在时的容错",
+    "enabled": false
+  },
+  {
+    "category": null,
+    "allLevels": false,
+    "tags": [],
+    "noTag": true,
+    "title": "",
+    "enabled": false
+  }
+]

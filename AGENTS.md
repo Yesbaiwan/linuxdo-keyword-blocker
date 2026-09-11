@@ -2,43 +2,41 @@
 
 ## 项目
 
-Linux.do Keyword Blocker — 单文件 Tampermonkey 用户脚本（`ld-blocker.user.js`），用「类别/标签/标题」规则自动隐藏/淡化 linux.do 帖子。无构建、无依赖、纯 DOM API，UI 文案简体中文。
+Linux.do Keyword Blocker —— 单文件 Tampermonkey 用户脚本（`ld-blocker.user.js`），按「类别 / 标签 / 标题」规则自动隐藏或淡化 linux.do 帖子。无构建、无依赖、纯 DOM API，UI 文案简体中文，只面向桌面 Chrome。
 
-## 产品行为
+## 行为与匹配（改脚本前先对齐）
 
-- 强制登录：头部有 `#current-user` 才启动；未登录不过滤、无任何 UI；SPA 登录后由观察器自动启动。
-- 入口：头像菜单标签列最底部的「屏蔽规则」按钮，点击后菜单内容区切换为规则管理视图。
-- 功能：总开关；规则 = 类别选择器 + 标签 + 标题（至少填一项）；单规则启停勾选框（停用画删除线）；行内编辑（在本行下方展开表单，保存/取消都在本行完成，不回填顶部表单）；可搜索类别 picker（输入即过滤、点选/回车选中、× 清除、失焦恢复原值）；隐藏/淡化两模式（默认淡化）；× 删除、导出 JSON、清空。刻意不做已添加规则的搜索（用户明确要求）。
-- 匹配：规则内已填字段**全部命中**（AND），任一规则命中即处理该行。类别按徽章 `data-category-id` 数字精确匹配所选分类本身，**不连带子分类**（整类屏蔽用 Discourse 自带分类静音）；标签按 `a.discourse-tag` 文字精确匹配（子串不命中）；标题包含匹配；均大小写不敏感。
-- 存储：`{ enabled, rules: [{category, tag, title, enabled}], hideMode }`；旧 `keywords` 数组读取时自动迁移为仅标题规则。
-- 类别树：运行时拉 `/site.json`，GM 缓存 7 天，带版本号并逐条校验格式；失败时空索引，已存类别规则仍按徽章 ID 生效。有子分类的分类统一显示「（不带等级）」后缀。子分类页（如 /c/develop/develop-lv1/20）行内无徽章，类别规则天然不命中。
+- 强制登录：头部有 `#current-user` 才启动；未登录不过滤、无任何 UI，SPA 登录后由观察器自动启动。
+- 入口：油猴菜单命令或 Ctrl+Q 打开悬浮面板（遮罩居中 540px 卡片，挂 body 常驻）；Esc / 点遮罩 / × 关闭并复位编辑态。
+- 面板：总开关；规则 = 类别下拉 + 标签（每框一个，最多 3 个，仅剩 1 个框时不给 ×）+ 标题，至少填一项；「无标签」复选框在标签行内，勾选后标签框与「+」收起；单规则启停（停用画删除线）；行内编辑在本行下方展开，与添加表单同一套字段；任何重建列表的操作（添加 / 删除 / 清空 / 保存、类别树就绪）都会收起编辑表单，只有单规则启停是就地更新；类别下拉外观同普通下拉框，输入即过滤、点选 / 回车选中、× 清除、失焦恢复；候选列表是 fixed 浮层，贴输入框上下方展开；隐藏 / 淡化两模式（默认淡化）；导入 / 导出 JSON（同一格式规则数组，导入走归一化：去重、去空、替换现有规则）；清空。已添加规则的搜索刻意不做。
+- 过滤范围：首页 / 最新 / 未读 / 热门 / 分类列表页（`tr.topic-list-item` 等）与搜索结果页（`.fps-result`）。搜索结果内层也带 `data-topic-id`，状态只打最外层行，内层清空。
+- 匹配：规则内已填字段全部命中（AND），任一规则命中即处理；均大小写不敏感。类别按徽章 `data-category-id` 数字精确匹配所选分类本身，默认不连带子分类，可选「所有等级」覆盖自身 + 全部等级后代；标签按 `a.discourse-tag` 文字精确匹配（子串不命中），一条规则最多 3 个、全部存在才命中；「无标签」只命中零标签帖（与标签互斥）；标题包含匹配。
+- 存储：`{ enabled, rules: [{category, allLevels, tags, noTag, title, enabled}], hideMode }`，只认这一种格式。
+- 类别树：运行时拉 `/site.json`，GM 缓存 7 天；拉不到时已存类别规则仍按徽章 ID 生效。下拉排列「（所有等级）→（不带等级）→ 各等级子分类（缩进）」，无子分类的只给裸名字。
 
-## 硬性约束（踩过坑，违反即出 bug）
+## 硬性约束（违反即出 bug）
 
-- 帖子行状态只能用 `data-lkcb-state` 属性，不能用 class：Ember 会异步重写行的 class。
-- 菜单是深度定制的 Discourse，结构以本站实测为准，不能用原版 Discourse 推断：8 个标签分属两组容器（跨组监听用 document 级委托）；入口用 profile 按钮 id 定位（`li#current-user` 关闭时也带 `user-menu-panel` 类，选择器会误命中）；菜单每次打开整面板重渲染、关闭即销毁，视图激活态随之复位；`panel-body` 是 `overflow: hidden` 固定高度，长列表让规则区自己滚动；`.panel-body-contents` 是 row-reverse 横向布局，别往里追加块级内容；菜单内点击/键盘事件必须 stopPropagation；视图容器复用 `quick-access-panel` 类，隐藏原生面板的 CSS 必须 `:not(#lkcb-quick-access)` 排除自己，限高只允许一层。
-- 站点 CDN 样式会隐形覆盖 display/flex-direction/justify-content 等（枚举样式表查不到），关键属性显式声明，以实测计算样式为准。
-- 类别 picker 下拉必须文档流内联展开，禁止浮层（transform 祖先劫持 fixed、滚动容器裁剪 absolute）；picker 的 `flex: 1` 只能用于横向 `.lkcb-row`。
-- 观察器只监听 `childList + subtree`，禁加 `attributes`（脚本自身 data 写入会自我触发）。匹配缓存**只存命中结果**：站点会原地摘空行内容再填回（置顶公告帖必现），骨架期算出的不命中落缓存会永久漏过滤；`handleAddedNodes` 对文本节点插入也要提升宿主行重算（站点填标题用文本节点，只认元素节点同样漏）。
-- id 以 `lkcb-` 开头的新增节点被观察器跳过（忽略自身 UI），测试 DOM 不要用该前缀。
-- `@version` 由用户管理，agent 不得擅自改动。
+- 行状态只用 `data-lkcb-state`（`hidden`/`dimmed`，与 `hideMode` 的 `hide`/`dim` 是两回事，必须映射），不能用 class：Ember 会异步重写行的 class。
+- 站点 CDN 样式会隐形覆盖 display / flex-direction / justify-content / width（枚举样式表查不到），关键属性显式声明，以实测计算样式为准。全局 `select { width: 220px }` 会撑宽下拉，故处理模式下拉用 `width: fit-content`。
+- 面板里的框按内容给宽，不撑满整行：处理模式下拉 `width: fit-content`；类别框与标题框共用 `--lkcb-field-w`（`syncFieldWidth()` 用 canvas 量最长分类展示名 + 子分类缩进算出，实测 214px），`#lkcb-panel` 留 210px 兜底。改分类展示名格式时同步看这里。
+- 头部标题 class 是 `.lkcb-head`，表单关键词输入框是 `.lkcb-title`，别混用。
+- 站点给 `input` 塞 `margin: 0 0 9px`、给 checkbox 塞四周 margin：面板内一律 `margin: 0` 归零，控件高度统一（输入框 32px、「+」32×32）。标签的「×」绝对定位浮在框内右侧。
+- 面板内 `hidden` 元素靠 `#lkcb-panel [hidden] { display: none !important }` 兜底（`.lkcb-tags` 自带 `display: flex` 会盖掉 `hidden`）。
+- 类别下拉候选列表必须 `position: fixed`（不参与面板布局，展开不撑高面板）；位置由 `reposition()` 按输入框 rect 算，贴下方、下方不够且上方宽裕时上弹；面板滚动与窗口缩放都要重新贴位（`activePicker` 记当前展开的 picker）。
+- 观察器只监听 `childList + subtree`，禁加 `attributes`（脚本自身写 data 会自我触发）。
+- 匹配缓存：「topicId → {规则版本, 内容指纹, 命中规则}」，命中与未命中都缓存，指纹（标题 + 类别 ID 集合 + 标签）一变就重算，骨架期算出的「不命中」在内容填进来后自动失效。不能只存命中，也不能只按 topicId 复用。规则变更靠 `matchVersion` 整批失效，缓存超 4000 条整批丢弃。
+- `handleAddedNodes` 先把行收进 Set 去重、批次末尾每行只判定一次（站点分多次插入骨架 / 标题 / 徽章）。文本节点只提升宿主行、别查后代；不要在容器节点上读 `textContent`（遍历整棵子树）。
+- 类别树就绪前（`ready === false`）不落任何行状态，等树到齐统一扫一次（否则页面会跳两次）。
+- 标题选择器不能逗号合并：置顶帖的空文本「置顶」按钮在文档序上先于标题。
+- id 以 `lkcb-` 开头的新增节点被观察器跳过，测试 DOM 不要用该前缀。
+- `@version` 由用户管理，不得改动。
 
 ## 开发 / 测试
 
-- 改动后必须在 linux.do 本站实测（小步逐项），不能用原版 Discourse 或推断代替。
-- 测试环境：chrome-devtools-mcp 控制的真实 Chrome（唯一环境），注入流程与 CSP 约束见 `tests/README.md`。可疑偶发失败先怀疑环境，重试再判断，不加环境补丁。
-- 会话恢复：`linux.do_cookies.txt`（Netscape 格式，已 gitignore）。
-- 自动化回归六套（`tests/suites/`，数据在 `tests/fixtures/`，入口 `tests/README.md`；重复运行前先刷新页面）：
-
-| 套件             | 覆盖                                                                                                                                  | 结果标志                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| console.js       | 34 项功能断言（登录门槛/CRUD/picker/精确匹配/AND/启停/行内编辑/存储损坏回退），自建 mock DOM                                          | `__lkcbTestResults`       |
-| rule-stress.js   | 17 条组合规则匹配语义，影子匹配器逐行比对；分类 ID（4=开发调优、11=搞七捻三、14=资源荟萃、35=Lv1）取自 2026-09 实测，站点改 ID 需同步 | `__lkcbRuleStressResults` |
-| bulk-stress.js   | 97 词仅标题规则压 UI 承载（滚动/footer/溢出/删除/过滤联动）                                                                           | `__lkcbStressResults`     |
-| performance.js   | CLS/隐藏延迟/长任务/滚动风暴/网络增量                                                                                                 | `__lkcbPerfResults`       |
-| spa.js           | 热门/最新路由重建零闪现、零泄漏、CLS=0                                                                                                | `__lkcbSpaResults`        |
-| narrow-screen.js | 窄屏抽屉视图/过滤/无横向溢出；桌面 UA + 移动 UA 各跑一遍                                                                              | `__lkcbNarrowResults`     |
-
-- CSP 硬约束：脚本在每份文档只允许 eval 一次，且必须发生在 evaluate 的同步栈内（await 后再 eval 会被站点 CSP 拦截）。
-- 未覆盖（用户明确无需或需人工）：导出下载、真实登出、真实 Tampermonkey 环境冒烟。
-- git 提交/推送需用户明确发话。
+- 改动后在 linux.do 本站实测（最新、未读、搜索三类页面各看一次），不用推断代替。
+- **别对站点做快速连续刷新 / 导航**：会触发限流，严重时封号。回归不要连着跑，两次之间留间隔；调试优先 `node tests/run.js console`（自建 mock DOM，只导航一次）。
+- 一条命令跑回归：`node tests/run.js [console|spa|perf|both]`。跑在测试专用 Chrome profile（`tests/.chrome-profile`，已 gitignore），登录态每次从 `linux.do_cookies.txt` 导入；套件覆盖与判读见 [tests/README.md](tests/README.md)。
+- 开测前先查干净，不干净就停下告诉用户，别带着污染测：页面里已有脚本实例（真实油猴装了本脚本），或专用 profile 里装了油猴 / 广告拦截（按扩展 ID 判定，Chrome 自带组件扩展不算）。
+- 隐私红线：`tests/serve.js` 只放行白名单（`ld-blocker.user.js` + `tests/suites/` + `tests/fixtures/`），其余 403——它带 CORS `*`，项目根下就是 `linux.do_cookies.txt`。cookie 文件永远不进 git。
+- chrome-devtools-mcp 只用于看页面 / 调试，不跑测试。
+- git 提交 / 推送需用户明确发话。
