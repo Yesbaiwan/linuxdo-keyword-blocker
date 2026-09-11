@@ -4,19 +4,22 @@ Linux.do 帖子屏蔽油猴脚本：用「类别 / 标签 / 标题」规则自�
 
 ## 安装
 
-需要浏览器已装 Tampermonkey。
+> 需要安装浏览器 Tampermonkey 插件，自行搜索教程。
 
-- 直装：[ld-blocker.user.js](https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js)
-- 手动：复制 [ld-blocker.user.js](ld-blocker.user.js) 内容到 Tampermonkey 新建脚本
+已有 Tampermonkey 插件，安装方式有两种：
+
+**方式一**：点击直装 → [Linux.do Keyword Blocker](https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js)
+
+**方式二**：手动复制 [ld-blocker.user.js](ld-blocker.user.js) 内容到 Tampermonkey 新建脚本
 
 ## 使用
 
 需要已登录 Linux.do；未登录时不过滤、也不显示任何界面，登录后自动生效。
 
-- **打开面板**：`Ctrl+Q`，或 Tampermonkey 菜单里的「屏蔽规则」；`Esc` / 点 × / 点遮罩空白关闭。
+- **打开面板**：`Ctrl+Q`，或 Tampermonkey 菜单里的「屏蔽规则」。
 - **总开关 / 处理模式**：需「启用屏蔽」总开关与该条规则的勾选同时打开才生效；处理模式「隐藏 / 淡化」，默认淡化。
 - **添加规则**：至少填「类别 / 标签 / 标题」中的一项，点「添加规则」立即生效。
-- **管理规则**：每行可单独启停（停用画删除线）、点「编辑」在该行下方原位修改、× 删除。
+- **管理规则**：每行可单独启停、点「编辑」在该行下方原位修改。
 - **导入 / 导出**：导出为 JSON 规则数组，导入同一格式（会替换现有全部规则）。
 - **清空**：删除所有规则。
 
