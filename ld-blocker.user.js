@@ -220,6 +220,11 @@
     );
   }
 
+  // 规则判重的指纹：不含 enabled（同内容不同启停算同一条，保留先出现的）
+  function ruleKey(rule) {
+    return `${rule.category}|${rule.allLevels}|${rule.tags}|${rule.noTag}|${rule.title}`;
+  }
+
   function normalizeRules(rules) {
     const seen = new Set();
     const out = [];
@@ -241,7 +246,7 @@
         enabled: raw?.enabled !== false,
       };
       if (isEmptyRule(rule)) continue;
-      const key = `${rule.category}|${rule.allLevels}|${rule.tags}|${rule.noTag}|${rule.title}`;
+      const key = ruleKey(rule);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(rule);
@@ -874,7 +879,8 @@
       }).click();
       URL.revokeObjectURL(url);
     });
-    // 导入：与导出的 JSON 同格式（规则数组），复用存储那套归一化与去重
+    // 导入：追加模式。逐条归一化后与现有规则判重——文件内部重复与已有规则重复都算重复，
+    // 只收新规则；全空规则直接丢、不算重复。判重指纹不含 enabled（与 normalizeRules 一致）
     const fileInput = overlay.querySelector('input[type="file"]');
     on('#lkcb-import', 'click', () => fileInput.click());
     fileInput.addEventListener('change', async () => {
@@ -887,10 +893,34 @@
       } catch (e) {
         return flashStatus('导入失败：不是合法的 JSON 文件');
       }
-      const rules = normalizeRules(parsed);
-      if (!rules.length) return flashStatus('导入失败：文件里没有有效规则');
-      updateSettings({ rules }, true);
-      flashStatus(`已导入 ${rules.length} 条规则`);
+      if (!Array.isArray(parsed))
+        return flashStatus('导入失败：文件里没有有效规则');
+      const seen = new Set(settings.rules.map(ruleKey));
+      const fresh = [];
+      let skipped = 0;
+      for (const raw of parsed) {
+        const [rule] = normalizeRules([raw]);
+        if (!rule) continue;
+        const key = ruleKey(rule);
+        if (seen.has(key)) {
+          skipped++;
+          continue;
+        }
+        seen.add(key);
+        fresh.push(rule);
+      }
+      if (!fresh.length)
+        return flashStatus(
+          skipped
+            ? `没有新规则，跳过 ${skipped} 条重复`
+            : '导入失败：文件里没有有效规则',
+        );
+      await updateSettings({ rules: [...settings.rules, ...fresh] }, true);
+      flashStatus(
+        skipped
+          ? `已导入 ${fresh.length} 条规则，跳过 ${skipped} 条重复`
+          : `已导入 ${fresh.length} 条规则`,
+      );
     });
     // 面板内容滚动 / 窗口缩放时让类别下拉浮层跟随输入框
     body.addEventListener('scroll', () => activePicker?.reposition());

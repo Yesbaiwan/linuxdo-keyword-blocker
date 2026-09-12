@@ -751,7 +751,7 @@
         !rules()[0].querySelector('.lkcb-rule-edit'),
       JSON.stringify(chips()),
     );
-    // ◆ 导入：与导出同格式的规则数组（去重去空），非法内容给提示且不动现有规则
+    // ◆ 导入：与导出同格式的规则数组，追加模式——文件内部重复、与现有规则重复都跳过
     const fileInput = document.querySelector(
       '#lkcb-overlay input[type="file"]',
     );
@@ -764,64 +764,73 @@
       fileInput.dispatchEvent(new Event('change'));
       await sleep(300);
     };
-    await importFile(
-      JSON.stringify([
-        {
-          category: 11,
-          tags: [],
-          noTag: false,
-          title: '导入标题',
-          enabled: true,
-        },
-        {
-          category: 11,
-          tags: [],
-          noTag: false,
-          title: '导入标题',
-          enabled: true,
-        },
-        {
-          category: 4,
-          allLevels: true,
-          tags: ['人工智能'],
-          noTag: false,
-          title: '',
-          enabled: false,
-        },
-        {
-          category: 14,
-          allLevels: true,
-          tags: [],
-          noTag: true,
-          title: '',
-          enabled: true,
-        },
-        { category: null, tags: [], noTag: false, title: '', enabled: true },
-      ]),
-    );
+    const importFixture = JSON.stringify([
+      {
+        category: 11,
+        tags: [],
+        noTag: false,
+        title: '导入标题',
+        enabled: true,
+      },
+      {
+        category: 11,
+        tags: [],
+        noTag: false,
+        title: '导入标题',
+        enabled: true,
+      },
+      {
+        category: 4,
+        allLevels: true,
+        tags: ['人工智能'],
+        noTag: false,
+        title: '',
+        enabled: false,
+      },
+      {
+        category: 14,
+        allLevels: true,
+        tags: [],
+        noTag: true,
+        title: '',
+        enabled: true,
+      },
+      { category: null, tags: [], noTag: false, title: '', enabled: true },
+    ]);
+    await importFile(importFixture);
     assert(
-      '导入：去重去空后落库，且 allLevels / noTag / enabled 字段完整保留',
-      chips().length === 3 &&
-        chips()[0] === `类别:${cat11Name} + 标题:导入标题` &&
-        chips()[1].includes('所有等级') &&
+      '导入（追加）：文件内部去重去空，新规则追加在现有规则之后且字段完整保留',
+      chips().length === 4 &&
+        chips()[0].includes('another') &&
+        chips()[1] === `类别:${cat11Name} + 标题:导入标题` &&
         chips()[2].includes('所有等级') &&
-        chips()[2].includes('零标签') &&
-        rules()[1].classList.contains('lkcb-off'),
-      JSON.stringify(chips()),
+        chips()[2].includes('人工智能') &&
+        chips()[3].includes('所有等级') &&
+        chips()[3].includes('零标签') &&
+        rules()[2].classList.contains('lkcb-off') &&
+        statusText().includes('已导入 3 条规则，跳过 1 条重复'),
+      JSON.stringify({ chips: chips(), status: statusText() }),
+    );
+    await importFile(importFixture);
+    assert(
+      '导入（追加）：再导同一文件，与现有规则全重复，一条不增',
+      // A 在文件里出现两次，两条都算重复：5 条 = 1 空 + 4 重复
+      chips().length === 4 && statusText().includes('没有新规则，跳过 4 条重复'),
+      JSON.stringify({ count: chips().length, status: statusText() }),
     );
     await importFile('{ 这不是 JSON');
     assert(
       '导入：非法 JSON 给提示且不动现有规则',
-      statusText().includes('导入失败') && chips().length === 3,
+      statusText().includes('导入失败') && chips().length === 4,
       statusText(),
     );
     await importFile('{}');
     assert(
       '导入：合法 JSON 但不是规则数组，同样给提示且不动现有规则',
-      statusText().includes('导入失败') && chips().length === 3,
+      statusText().includes('导入失败') && chips().length === 4,
       statusText(),
     );
-    // ◆ 规则集文件本身：≥20 条，且每条都能被归一化保留（没有全空/重复的废项）
+    // ◆ 规则集文件本身：≥20 条，全部为可归一化的新规则，整包追加
     const sampleText = (() => {
       const x = new XMLHttpRequest();
       x.open(
@@ -833,10 +842,13 @@
       return x.responseText;
     })();
     const sample = JSON.parse(sampleText);
+    const beforeSample = chips().length;
     await importFile(sampleText);
     assert(
-      '规则集文件：≥20 条且导入后一条不少',
-      sample.length >= 20 && chips().length === sample.length,
+      '规则集文件：≥20 条且整包追加成功（无内部重复、与现有规则无重叠）',
+      sample.length >= 20 &&
+        chips().length === beforeSample + sample.length &&
+        statusText().includes(`已导入 ${sample.length} 条规则`),
       `${sample.length} 条 → ${chips().length} 行`,
     );
 
