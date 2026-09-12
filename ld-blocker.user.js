@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.5.2
+// @version      2.5.3
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       linuxdo-keyword-blocker
 // @match        https://linux.do/*
