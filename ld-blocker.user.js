@@ -44,6 +44,7 @@
   let addForm = null;
   let activePicker = null; // 当前展开的类别下拉浮层，供面板滚动/窗口缩放时重新定位
   let statusTimer = null;
+  let clearArmTimer = null; // 清空按钮确认态的自动复位定时器
   let ready = false; // 类别树就绪前不落状态，否则同一行会被算两遍、页面上跳两次
   let catTreeFailed = false; // 类别列表没拉到：面板里明确提示，别静默降级
 
@@ -425,7 +426,10 @@
 #lkcb-panel .lkcb-rule-line { display: flex; align-items: center; gap: 6px; } #lkcb-panel .lkcb-rule-line input[type="checkbox"] { flex-shrink: 0; } #lkcb-panel .lkcb-rule-text { flex: 1; min-width: 0; line-height: 1.5; word-break: break-word; } #lkcb-panel li.lkcb-off .lkcb-rule-text { opacity: 0.45; text-decoration: line-through; }
 #lkcb-panel .lkcb-rule-line button { flex-shrink: 0; display: flex; align-items: center; justify-content: center; height: 20px; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 12px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-rule-line button.lkcb-edit:hover { color: var(--tertiary, #0088cc); } #lkcb-panel .lkcb-rule-line button.lkcb-remove { width: 18px; font-size: 14px; } #lkcb-panel .lkcb-rule-line button.lkcb-remove:hover { color: var(--danger, #ff5555); }
 #lkcb-panel .lkcb-rule-edit { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--primary-low, #dddddd); } #lkcb-panel .lkcb-rule-edit .lkcb-row { margin-bottom: 8px; } #lkcb-panel .lkcb-rule-edit .lkcb-row:last-child { margin-bottom: 0; }
-#lkcb-panel .lkcb-empty { margin-top: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; }`;
+#lkcb-panel .lkcb-empty { margin-top: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; }
+/* 清空：低频危险操作，页脚最左的降权文字按钮，与右侧导入/导出拉开；确认态红底白字，0 规则禁用。
+   居中必须显式 flex 声明（站点 CDN 会隐形覆盖对齐属性）；hover 变红仅限常态——
+   红字落在确认态的红底上会隐形，用 :not() 显式排除，不靠特异度或声明顺序碰运气 */ #lkcb-panel #lkcb-clear { margin-right: auto; display: inline-flex; align-items: center; justify-content: center; line-height: 1; border: none; background: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: var(--primary-medium, #919191); cursor: pointer; } #lkcb-panel #lkcb-clear:hover:not(:disabled):not(.lkcb-arm) { color: var(--danger, #ff5555); } #lkcb-panel #lkcb-clear.lkcb-arm { background: var(--danger, #ff5555); color: #ffffff; font-weight: 600; } #lkcb-panel #lkcb-clear:disabled { color: var(--primary-low, #dddddd); cursor: default; }`;
     document.documentElement.appendChild(style);
   }
 
@@ -810,11 +814,25 @@
     statusTimer = setTimeout(renderStatus, 2400);
   }
 
+  // 清空按钮确认态复位（3 秒超时 / 列表重建 / 关面板，后两者经由 renderRules 走到这里）
+  function disarmClear() {
+    clearTimeout(clearArmTimer);
+    const btn = document.getElementById('lkcb-clear');
+    if (!btn) return;
+    btn.classList.remove('lkcb-arm');
+    btn.textContent = '清空';
+    btn.title = '清空所有规则';
+  }
+
   function renderRules() {
     editForm = null;
     const list = document.getElementById('lkcb-rules');
     list.replaceChildren(...settings.rules.map(buildRuleRow));
     document.getElementById('lkcb-empty').hidden = settings.rules.length > 0;
+    // 清空按钮：0 规则时清空无意义，禁用；列表重建时顺带复位确认态
+    document.getElementById('lkcb-clear').disabled =
+      settings.rules.length === 0;
+    disarmClear();
     renderStatus();
   }
 
@@ -840,9 +858,9 @@
     <div id="lkcb-empty" class="lkcb-empty" hidden>还没有规则</div>
 </div>
 <div class="lkcb-footer">
-    <button id="lkcb-import" class="btn btn-default" type="button" title="从 JSON 文件导入规则（替换当前全部规则）">导入</button>
+    <button id="lkcb-clear" type="button" title="清空所有规则">清空</button>
+    <button id="lkcb-import" class="btn btn-default" type="button" title="从 JSON 文件导入规则（追加到现有规则，重复的自动跳过）">导入</button>
     <button id="lkcb-export" class="btn btn-default" type="button" title="把当前规则导出成 JSON 文件">导出</button>
-    <button id="lkcb-clear" class="btn btn-default" type="button">清空</button>
 </div>
 <input type="file" accept=".json,application/json" hidden />`;
     document.body.appendChild(overlay);
@@ -866,7 +884,22 @@
     on('#lkcb-hideMode', 'change', (e) =>
       updateSettings({ hideMode: e.target.value }, false),
     );
-    on('#lkcb-clear', 'click', () => updateSettings({ rules: [] }, true));
+    // 清空：两段式确认防误触——首击只进入确认态（3 秒无操作自动复位），再击才执行。
+    // 确认态换 title 提示下一步动作（原生 tooltip 有约 1 秒悬停延迟，静态说明在 3 秒窗口内基本看不到）
+    on('#lkcb-clear', 'click', () => {
+      const btn = panel.querySelector('#lkcb-clear');
+      if (btn.classList.contains('lkcb-arm')) {
+        disarmClear();
+        updateSettings({ rules: [] }, true);
+        return;
+      }
+      btn.classList.add('lkcb-arm');
+      // 不带标点：全角「？」自带右侧空白，红底上文字看着不居中
+      btn.textContent = '确认清空';
+      btn.title = '再点一次执行清空';
+      clearTimeout(clearArmTimer);
+      clearArmTimer = setTimeout(disarmClear, 3000);
+    });
     on('#lkcb-export', 'click', () => {
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(settings.rules, null, 2)], {

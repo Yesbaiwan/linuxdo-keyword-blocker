@@ -192,6 +192,9 @@
   }
 
   const clearRules = async () => {
+    // 清空是两段式确认：首击进入确认态，再击执行
+    document.getElementById('lkcb-clear').click();
+    await sleep(50);
     document.getElementById('lkcb-clear').click();
     await sleep(200);
   };
@@ -869,15 +872,42 @@
     document.dispatchEvent(keyEvent('q', true));
     await sleep(150);
 
-    // ◆ 清空
-    document.getElementById('lkcb-clear').click();
+    // ◆ 清空：页脚左端与导入/导出拉开 + 两段式确认防误触
+    const clearBtn = document.getElementById('lkcb-clear');
+    const clearGap =
+      document.getElementById('lkcb-import').getBoundingClientRect().left -
+      clearBtn.getBoundingClientRect().right;
+    assert(
+      '清空按钮：位于页脚左端，与导入/导出拉开距离（间距 > 50px）',
+      clearGap > 50,
+      `gap=${Math.round(clearGap)}px`,
+    );
+    assert(
+      '清空按钮：有规则时可用',
+      clearBtn.disabled === false,
+      `disabled=${clearBtn.disabled}`,
+    );
+    clearBtn.click();
+    await sleep(100);
+    assert(
+      '清空：首击只进入确认态，不清空（含下一步动作的 title 提示）',
+      chips().length > 0 &&
+        clearBtn.textContent === '确认清空' &&
+        clearBtn.classList.contains('lkcb-arm') &&
+        clearBtn.title.includes('再点一次'),
+      `${chips().length} 条 / ${clearBtn.textContent} / ${clearBtn.title}`,
+    );
+    clearBtn.click();
     await sleep(200);
     assert(
-      '清空按钮：规则清零 + 状态行复位 + 空态提示',
+      '清空：再击执行（规则清零 + 状态行复位 + 空态提示 + 按钮复位禁用）',
       chips().length === 0 &&
         statusText() === '已启用，还没有规则' &&
-        !document.getElementById('lkcb-empty').hidden,
-      `${chips().length} 条 / ${statusText()}`,
+        !document.getElementById('lkcb-empty').hidden &&
+        clearBtn.disabled &&
+        clearBtn.textContent === '清空' &&
+        clearBtn.title === '清空所有规则',
+      `${chips().length} 条 / ${statusText()} / ${clearBtn.textContent}`,
     );
 
     // ◆ site.json 拉取的超时信号：挂起的连接会被掐断走重试，而不是把过滤无限期拖住
