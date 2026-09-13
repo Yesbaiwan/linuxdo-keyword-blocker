@@ -226,27 +226,34 @@
     return `${rule.category}|${rule.allLevels}|${rule.tags}|${rule.noTag}|${rule.title}`;
   }
 
+  // 单条规则归一化：字段修剪、「零标签」清标签、allLevels 只在有类别时有意义、标签上限截断；
+  // 全空（至少填一项约束）返回 null
+  function normalizeRule(raw) {
+    const parsed = parseInt(raw?.category, 10);
+    const category = Number.isNaN(parsed) ? null : parsed;
+    // 「零标签」与标签列表互斥，勾选 noTag 后不保留 tags
+    const noTag = !!raw?.noTag;
+    const rule = {
+      category,
+      // 不限等级只在选到类别时有意义（命中该分类自身 + 全部后代等级）
+      allLevels: category != null && !!raw?.allLevels,
+      tags: noTag ? [] : normalizeTags(raw?.tags || []),
+      noTag,
+      title: String(raw?.title || '').trim(),
+      enabled: raw?.enabled !== false,
+    };
+    return isEmptyRule(rule) ? null : rule;
+  }
+
+  // 规则列表归一化：形状不对（手改存储 / 导入非数组 JSON）一律当作没有——for...of 对非可迭代值
+  // 会抛错，把 loadSettings / 导入整条链路炸掉；同内容去重，保留先出现的
   function normalizeRules(rules) {
     const seen = new Set();
     const out = [];
-    // 形状不对（手改存储 / 导入非数组 JSON）一律当作没有：for...of 对非可迭代值会抛错，
-    // 把 loadSettings / 导入整条链路炸掉
     if (!Array.isArray(rules)) return out;
     for (const raw of rules) {
-      const parsed = parseInt(raw?.category, 10);
-      const category = Number.isNaN(parsed) ? null : parsed;
-      // 「零标签」与标签列表互斥，勾选 noTag 后不保留 tags
-      const noTag = !!raw?.noTag;
-      const rule = {
-        category,
-        // 不限等级只在选到类别时有意义（命中该分类自身 + 全部后代等级）
-        allLevels: category != null && !!raw?.allLevels,
-        tags: noTag ? [] : normalizeTags(raw?.tags || []),
-        noTag,
-        title: String(raw?.title || '').trim(),
-        enabled: raw?.enabled !== false,
-      };
-      if (isEmptyRule(rule)) continue;
+      const rule = normalizeRule(raw);
+      if (!rule) continue;
       const key = ruleKey(rule);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -427,9 +434,12 @@
 #lkcb-panel .lkcb-rule-line button { flex-shrink: 0; display: flex; align-items: center; justify-content: center; height: 20px; border: none; background: none; padding: 0; color: var(--primary-medium, #919191); font-size: 12px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-rule-line button.lkcb-edit:hover { color: var(--tertiary, #0088cc); } #lkcb-panel .lkcb-rule-line button.lkcb-remove { width: 18px; font-size: 14px; } #lkcb-panel .lkcb-rule-line button.lkcb-remove:hover { color: var(--danger, #ff5555); }
 #lkcb-panel .lkcb-rule-edit { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--primary-low, #dddddd); } #lkcb-panel .lkcb-rule-edit .lkcb-row { margin-bottom: 8px; } #lkcb-panel .lkcb-rule-edit .lkcb-row:last-child { margin-bottom: 0; }
 #lkcb-panel .lkcb-empty { margin-top: 10px; padding: 14px; text-align: center; font-size: 13px; color: var(--primary-medium, #919191); border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; }
-/* 清空：低频危险操作，页脚最左的降权文字按钮，与右侧导入/导出拉开；确认态红底白字，0 规则禁用。
-   居中必须显式 flex 声明（站点 CDN 会隐形覆盖对齐属性）；hover 变红仅限常态——
-   红字落在确认态的红底上会隐形，用 :not() 显式排除，不靠特异度或声明顺序碰运气 */ #lkcb-panel #lkcb-clear { margin-right: auto; display: inline-flex; align-items: center; justify-content: center; line-height: 1; border: none; background: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: var(--primary-medium, #919191); cursor: pointer; } #lkcb-panel #lkcb-clear:hover:not(:disabled):not(.lkcb-arm) { color: var(--danger, #ff5555); } #lkcb-panel #lkcb-clear.lkcb-arm { background: var(--danger, #ff5555); color: #ffffff; font-weight: 600; } #lkcb-panel #lkcb-clear:disabled { color: var(--primary-low, #dddddd); cursor: default; }`;
+/* 清空与批量启停：页脚左组的降权文字按钮（清空低频危险、批量启停可逆），与右侧导入/导出拉开。
+   居中必须显式 flex 声明（站点 CDN 会隐形覆盖对齐属性）；hover 变色仅限常态——
+   清空的红字落在确认态的红底上会隐形，用 :not() 显式排除，不靠特异度或声明顺序碰运气 */
+#lkcb-panel #lkcb-clear, #lkcb-panel #lkcb-bulk-toggle { display: inline-flex; align-items: center; justify-content: center; line-height: 1; border: none; background: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; color: var(--primary-medium, #919191); cursor: pointer; }
+#lkcb-panel #lkcb-bulk-toggle { margin-right: auto; } #lkcb-panel #lkcb-clear:hover:not(:disabled):not(.lkcb-arm) { color: var(--danger, #ff5555); } #lkcb-panel #lkcb-clear.lkcb-arm { background: var(--danger, #ff5555); color: #ffffff; font-weight: 600; } #lkcb-panel #lkcb-bulk-toggle:hover:not(:disabled) { color: var(--tertiary, #0088cc); }
+#lkcb-panel #lkcb-clear:disabled, #lkcb-panel #lkcb-bulk-toggle:disabled { color: var(--primary-low, #dddddd); cursor: default; }`;
     document.documentElement.appendChild(style);
   }
 
@@ -824,6 +834,17 @@
     btn.title = '清空所有规则';
   }
 
+  // 批量启停按钮：文字显示将执行的动作——全开时是「全部停用」，否则（含混合状态）是「全部启用」
+  function syncBulkToggle() {
+    const btn = document.getElementById('lkcb-bulk-toggle');
+    btn.disabled = settings.rules.length === 0;
+    btn.textContent =
+      settings.rules.length > 0 &&
+      settings.rules.every((r) => r.enabled !== false)
+        ? '全部停用'
+        : '全部启用';
+  }
+
   function renderRules() {
     editForm = null;
     const list = document.getElementById('lkcb-rules');
@@ -833,6 +854,7 @@
     document.getElementById('lkcb-clear').disabled =
       settings.rules.length === 0;
     disarmClear();
+    syncBulkToggle();
     renderStatus();
   }
 
@@ -859,6 +881,7 @@
 </div>
 <div class="lkcb-footer">
     <button id="lkcb-clear" type="button" title="清空所有规则">清空</button>
+    <button id="lkcb-bulk-toggle" type="button" title="一键启用/停用所有规则">全部停用</button>
     <button id="lkcb-import" class="btn btn-default" type="button" title="从 JSON 文件导入规则（追加到现有规则，重复的自动跳过）">导入</button>
     <button id="lkcb-export" class="btn btn-default" type="button" title="把当前规则导出成 JSON 文件">导出</button>
 </div>
@@ -900,6 +923,14 @@
       clearTimeout(clearArmTimer);
       clearArmTimer = setTimeout(disarmClear, 3000);
     });
+    // 批量启停：完全可逆，无需确认；整体改 enabled 后重建列表，文字与状态行随之刷新
+    on('#lkcb-bulk-toggle', 'click', () => {
+      const enable = settings.rules.some((r) => r.enabled === false);
+      updateSettings(
+        { rules: settings.rules.map((r) => ({ ...r, enabled: enable })) },
+        true,
+      );
+    });
     on('#lkcb-export', 'click', () => {
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(settings.rules, null, 2)], {
@@ -932,8 +963,8 @@
       const fresh = [];
       let skipped = 0;
       for (const raw of parsed) {
-        const [rule] = normalizeRules([raw]);
-        if (!rule) continue;
+        const rule = normalizeRule(raw);
+        if (!rule) continue; // 全空规则直接丢、不算重复
         const key = ruleKey(rule);
         if (seen.has(key)) {
           skipped++;
@@ -964,6 +995,10 @@
   function addRule() {
     const rule = addForm.read();
     if (isEmptyRule(rule)) return; // 至少填一项
+    // 与现有规则重复（归一化后同内容算同一条，与导入共用 ruleKey 指纹）：
+    // 不收、状态行提示，表单内容保留，用户可直接改条件再提交
+    if (settings.rules.some((r) => ruleKey(r) === ruleKey(normalizeRule(rule))))
+      return flashStatus('这条规则已经存在');
     updateSettings({ rules: [...settings.rules, rule] }, true);
     addForm.reset();
     addForm.title.focus();

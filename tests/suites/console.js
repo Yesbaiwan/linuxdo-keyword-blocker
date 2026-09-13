@@ -371,6 +371,16 @@
       rules().length === 1 && statusText() === '已启用，1/1 条规则生效',
       JSON.stringify({ rows: rules().length, status: statusText() }),
     );
+    // ◆ 重复添加：与现有规则同内容（归一化后）不收，状态行提示且表单内容保留
+    await addRule('11', '新标签', ' 新标题');
+    await sleep(100);
+    assert(
+      '添加重复规则：不新增、状态行提示、表单内容保留',
+      chips().length === 1 &&
+        statusText() === '这条规则已经存在' &&
+        addForm().querySelector('.lkcb-title').value.includes('新标题'),
+      `${chips().length} 条 / ${statusText()}`,
+    );
     lastRule().querySelector('.lkcb-remove').click();
     await sleep(200);
     assert('× 删除规则', chips().length === 0, JSON.stringify(chips()));
@@ -872,13 +882,55 @@
     document.dispatchEvent(keyEvent('q', true));
     await sleep(150);
 
-    // ◆ 清空：页脚左端与导入/导出拉开 + 两段式确认防误触
-    const clearBtn = document.getElementById('lkcb-clear');
-    const clearGap =
-      document.getElementById('lkcb-import').getBoundingClientRect().left -
-      clearBtn.getBoundingClientRect().right;
+    // ◆ 批量启停：一键翻转所有规则的勾选（可逆，无需确认）；文字显示将执行的动作
+    const bulkBtn = document.getElementById('lkcb-bulk-toggle');
+    const rowChecks = () =>
+      rules().map((li) => li.querySelector('input[type="checkbox"]'));
+    const bulkTotal = chips().length;
+    rowChecks()[0]?.click(); // 先停用一条，制造混合状态
+    await sleep(120);
     assert(
-      '清空按钮：位于页脚左端，与导入/导出拉开距离（间距 > 50px）',
+      '批量启停：有规则时混合状态显示「全部启用」且可用',
+      bulkTotal > 0 && bulkBtn.textContent === '全部启用' && !bulkBtn.disabled,
+      `${bulkTotal} 条 / ${bulkBtn.textContent}`,
+    );
+    bulkBtn.click();
+    await sleep(150);
+    assert(
+      '批量启停：点一下全部启用（勾选 + 状态行 + 文字翻成「全部停用」）',
+      rowChecks().every((c) => c.checked) &&
+        statusText() === `已启用，${bulkTotal}/${bulkTotal} 条规则生效` &&
+        bulkBtn.textContent === '全部停用',
+      `${rowChecks().filter((c) => c.checked).length}/${bulkTotal} / ${statusText()} / ${bulkBtn.textContent}`,
+    );
+    bulkBtn.click();
+    await sleep(150);
+    assert(
+      '批量启停：再点全部停用（勾选 + 删除线 + 状态行 + 文字翻回「全部启用」）',
+      rowChecks().every((c) => !c.checked) &&
+        rules().every((li) => li.classList.contains('lkcb-off')) &&
+        statusText() === `已启用，0/${bulkTotal} 条规则生效` &&
+        bulkBtn.textContent === '全部启用',
+      `${statusText()} / ${bulkBtn.textContent}`,
+    );
+
+    // ◆ 清空：页脚左组（清空 → 批量启停）与右侧导入/导出拉开 + 两段式确认防误触
+    const clearBtn = document.getElementById('lkcb-clear');
+    const [clearRect, bulkRect, importRect] = [
+      clearBtn,
+      bulkBtn,
+      document.getElementById('lkcb-import'),
+    ].map((b) => b.getBoundingClientRect());
+    const leftGroupOk =
+      clearRect.left < bulkRect.left && bulkRect.right < importRect.left;
+    const clearGap = importRect.left - bulkRect.right;
+    assert(
+      '页脚左组顺序：清空 → 批量启停 → 导入（批量启停紧邻清空）',
+      leftGroupOk,
+      JSON.stringify([clearRect.left, bulkRect.left, importRect.left]),
+    );
+    assert(
+      '清空按钮：左组与导入/导出拉开距离（间距 > 50px）',
       clearGap > 50,
       `gap=${Math.round(clearGap)}px`,
     );
@@ -908,6 +960,11 @@
         clearBtn.textContent === '清空' &&
         clearBtn.title === '清空所有规则',
       `${chips().length} 条 / ${statusText()} / ${clearBtn.textContent}`,
+    );
+    assert(
+      '批量启停：0 规则时禁用',
+      bulkBtn.disabled && bulkBtn.textContent === '全部启用',
+      `${bulkBtn.disabled} / ${bulkBtn.textContent}`,
     );
 
     // ◆ site.json 拉取的超时信号：挂起的连接会被掐断走重试，而不是把过滤无限期拖住
