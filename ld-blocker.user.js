@@ -3,16 +3,17 @@
 // @namespace    https://linux.do/
 // @version      2.5.5
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
-// @author       linuxdo-keyword-blocker
+// @author       ℬ𝒶𝒾𝒲𝒶𝓃
 // @match        https://linux.do/*
-// @homepageURL  https://github.com/Yesbaiwan/linuxdo-keyword-blocker
-// @downloadURL  https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js
-// @updateURL    https://github.com/Yesbaiwan/linuxdo-keyword-blocker/raw/main/ld-blocker.user.js
+// @icon64       https://www.google.com/s2/favicons?sz=64&domain=linux.do
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
 // @license      MIT
+// @homepageURL  https://github.com/Yesbaiwan/linuxdo-keyword-blocker
+// @downloadURL  https://update.greasyfork.org/scripts/589673/Linuxdo%20Keyword%20Blocker.user.js
+// @updateURL    https://update.greasyfork.org/scripts/589673/Linuxdo%20Keyword%20Blocker.meta.js
 // ==/UserScript==
 
 (function () {
