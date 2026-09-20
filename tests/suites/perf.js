@@ -8,7 +8,7 @@
 //   4) 全程无脚本自身的 JS 报错
 //   5) 全过程每行状态只写一次；滚动加载期间 CLS ≤ 0.01
 // 只报告不判定：CLS 首屏（隐藏模式把行摘掉，必然位移）与「内容到达 → 状态落地」的延迟分位数，
-// 都由站点自身渲染 / hydration 决定，卡阈值只会随机红（原因见 AGENTS.md）。
+// 都由站点自身渲染 / hydration 决定，卡阈值只会随机红（判读口径见 docs/testing.md）。
 // 结果挂 window.__lkcbPerfResults（__lkcbPerfRunning 为结束标志），并 POST 回 tests/serve.js。
 // 规则集来自 tests/fixtures/rules-sample.json；由 tests/run.js 注入，页面已登录、专用 profile 无扩展。
 

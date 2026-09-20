@@ -1,9 +1,7 @@
 'use strict';
-// 本地跑真机回归：node tests/run.js [console|spa|perf|both]（默认 both），全绿退出码 0。
-// 跑在测试专用 Chrome profile（默认 tests/.chrome-profile，可用 LKCB_CHROME_PROFILE 换），登录态每次从
-// linux.do_cookies.txt 导入，失效就停下不跑（chrome.exe 路径可用 LKCB_CHROME 换）。
-// 流程：connectOverCDP 挂上去 → 查环境干净 → 预热一轮 → 逐套导航 + 同步 XHR 注入 → 页面把结果 POST 回
-// 本地 serve.js，这里只打摘要与失败明细。
+// 本地跑真机回归：node tests/run.js [console|spa|perf|both]（默认 both），全绿退出码 0。跑在测试专用 Chrome
+// profile（默认 tests/.chrome-profile，可用 LKCB_CHROME_PROFILE 换），登录态每次从 linux.do_cookies.txt 导入。
+// 流程：connectOverCDP 挂上去 → 前置检查（同时预热）→ 逐套导航 + 同步 XHR 注入 → 页面 POST 回本地 serve.js。
 
 const fs = require('fs');
 const path = require('path');
@@ -131,19 +129,43 @@ function loadCookies() {
   return cookies;
 }
 
-// 打开首页，等登录态与列表出现
-async function gotoReady(page) {
-  await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  return page
+// 两种症状都是 cookie 失效，处理办法一样：换一份 cookie 再跑
+const COOKIE_MSG = 'cookie 已失效，重新导出一份覆盖 linux.do_cookies.txt 再跑';
+
+// 导航一次判定登录态与站点可达性：返回 '' 表示就绪，否则是给用户看的原因
+async function visit(page) {
+  const resp = await page
+    .goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    .catch(() => null);
+  // 挑战页标题是「请稍候…」、响应码 403，DOM 里既没有列表也没有登录态
+  const state = () =>
+    page
+      .evaluate(() => [
+        /just a moment|请稍候/i.test(document.title) ||
+          !!document.querySelector('#challenge-running, #cf-chl'),
+        !!document.getElementById('current-user'),
+        !!document.querySelector('tr.topic-list-item'),
+      ])
+      .catch(() => [false, false, false]);
+  if (!resp || resp.status() >= 400) {
+    const [cf] = await state();
+    return cf
+      ? `被 Cloudflare 挑战页拦住（${COOKIE_MSG}）`
+      : `打不开 linux.do（${resp ? 'HTTP ' + resp.status() : '请求失败'}）`;
+  }
+  // 等应用外壳出来：登录态，或匿名页的登录按钮
+  await page
     .waitForFunction(
       () =>
-        !!document.getElementById('current-user') &&
-        document.querySelectorAll('tr.topic-list-item').length > 0,
+        !!document.getElementById('current-user') ||
+        !!document.querySelector('.login-button, tr.topic-list-item'),
       null,
       { timeout: 45000 },
     )
-    .then(() => true)
-    .catch(() => false);
+    .catch(() => {});
+  const [, loggedIn, hasRows] = await state();
+  if (!loggedIn) return `没登录上（${COOKIE_MSG}）`;
+  return hasRows ? '' : '页面列表没出来（站点可能抽风），稍后重跑一次';
 }
 
 async function runSuite(page, name) {
@@ -151,11 +173,9 @@ async function runSuite(page, name) {
   serve.clearResult();
   pageLogs.length = 0; // 只留这一套的页面报错
   console.log(`\n--- ${name} ---`);
-  const ready = await gotoReady(page);
-  if (!ready) {
-    console.log(
-      '❌ 页面没就绪（未登录 / 列表没出来）—— 登录态来自 linux.do_cookies.txt，过期了就重新导出一份',
-    );
+  const whyFail = await visit(page);
+  if (whyFail) {
+    console.log(`❌ 页面没就绪，跳过本套：${whyFail}`);
     return false;
   }
   // 注入前先确认页面里没有别的实例（真实油猴在跑的话，双实例互踩，结果不可信）
@@ -243,20 +263,11 @@ async function main() {
       if (m.type() === 'error') pageLogs.push('console error: ' + m.text());
     });
 
-    // 先空跑一轮把页面/缓存带热：perf 量的是热页面（冷缓存那一下被站点自身加载 + hydration 拖着走）
-    console.log('[run] 预热一轮页面加载…');
-    const warm = await gotoReady(page);
-    if (!warm) {
-      // 登录态来自 linux.do_cookies.txt：失效就别往下测了，等用户换 cookie
-      const loggedIn = await page
-        .evaluate(() => !!document.getElementById('current-user'))
-        .catch(() => false);
-      console.log(
-        loggedIn
-          ? '❌ 页面列表没出来（站点可能抽风），稍后重跑一次'
-          : '❌ 没登录上：linux.do_cookies.txt 里的 cookie 失效了。\n' +
-              '   请你重新导出一份换掉它，我再重跑；在那之前我不会继续测任何东西。',
-      );
+    // 前置检查：这一轮导航同时预热（perf 量的是热页面）；站点不可达 / 被 CF 拦 / cookie 失效 / 列表没出来都停在这里
+    console.log('[run] 前置检查：站点可达 + 登录态…');
+    const whyFail = await visit(page);
+    if (whyFail) {
+      console.log(`❌ 前置检查没通过，不跑任何套件：${whyFail}`);
       process.exitCode = 1;
       return;
     }

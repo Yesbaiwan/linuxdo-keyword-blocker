@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.5.6
+// @version      2.6.0
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       ℬ𝒶𝒾𝒲𝒶𝓃
 // @match        https://linux.do/*
@@ -425,7 +425,7 @@
 #lkcb-panel #lkcb-close:hover, #lkcb-panel .lkcb-cat-clear:hover, #lkcb-panel .lkcb-tag-remove:hover { color: var(--danger, #ff5555); } #lkcb-panel .lkcb-cat-caret:hover { color: var(--primary, #222222); }
 /* 类别下拉：候选列表是 fixed 浮层，不参与面板布局；输入框宽度与标题框一致（清除键与箭头在框外） */ #lkcb-panel .lkcb-cat-picker { flex: 0 0 auto; min-width: 0; } #lkcb-panel .lkcb-cat-input-row { display: flex; align-items: center; gap: 2px; } #lkcb-panel .lkcb-cat-input-row .lkcb-cat-input { flex: none; width: var(--lkcb-field-w); }
 #lkcb-panel .lkcb-cat-list { position: fixed; box-sizing: border-box; z-index: 5; max-height: 220px; overflow-y: auto; background: var(--secondary, #ffffff); border: 1px solid var(--primary-low, #dddddd); border-radius: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
-#lkcb-panel .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #lkcb-panel .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); } #lkcb-panel .lkcb-cat-none { color: var(--primary-medium, #919191); } #lkcb-panel .lkcb-cat-item[data-retry] { color: var(--danger, #ff5555); }
+#lkcb-panel .lkcb-cat-item { padding: 7px 10px; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #lkcb-panel .lkcb-cat-item:hover { background: var(--primary-very-low, #f8f8f8); } #lkcb-panel .lkcb-cat-item.is-active { background: var(--primary-low, #e9e9e9); } #lkcb-panel .lkcb-cat-none { color: var(--primary-medium, #919191); } #lkcb-panel .lkcb-cat-item[data-retry] { color: var(--danger, #ff5555); }
 /* 标签组：框 + 框内右侧 × + 添加按钮 + 「零标签」 */ #lkcb-panel .lkcb-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; } #lkcb-panel .lkcb-tag-box { position: relative; display: flex; align-items: center; flex: 0 1 108px; min-width: 0; } #lkcb-panel .lkcb-tag-box input[type="text"] { flex: 1; min-width: 0; padding-right: 22px; }
 #lkcb-panel .lkcb-tag-remove { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; font-size: 14px; }
 #lkcb-panel .lkcb-tag-add { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px dashed var(--primary-low, #dddddd); border-radius: 4px; background: none; color: var(--primary-medium, #919191); font-size: 16px; line-height: 1; cursor: pointer; } #lkcb-panel .lkcb-tag-add:hover { color: var(--tertiary, #0088cc); border-color: var(--tertiary, #0088cc); }
@@ -520,6 +520,46 @@
     };
   }
 
+  // 候选列表的上下键导航：维护唯一高亮行，被高亮那行就是回车确认的目标
+  function createListNavigator(list) {
+    let idx = -1;
+    // 「重试」是动作行，不参与选择
+    const items = () => [
+      ...list.querySelectorAll('.lkcb-cat-item:not([data-retry])'),
+    ];
+    const setActive = (next) => {
+      const all = items();
+      all.forEach((el, i) => el.classList.toggle('is-active', i === next));
+      idx = next;
+      const el = all[next];
+      if (!el) return;
+      // 只滚浮层自己：直接算偏移，避免 scrollIntoView 连带滚页面
+      const top = el.offsetTop;
+      const bottom = top + el.offsetHeight;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight)
+        list.scrollTop = bottom - list.clientHeight;
+    };
+    return {
+      reset: () => setActive(-1),
+      // 没有高亮时向下取首行、向上取末行；到两端绕回另一端
+      move(delta) {
+        const total = items().length;
+        if (!total) return;
+        setActive(
+          idx < 0 ? (delta > 0 ? 0 : total - 1) : (idx + delta + total) % total,
+        );
+      },
+      highlight(el) {
+        const i = items().indexOf(el);
+        if (i >= 0 && i !== idx) setActive(i);
+      },
+      get current() {
+        return items()[idx];
+      },
+    };
+  }
+
   // 类别下拉：外观与普通下拉框一致（右侧箭头点击开合），但保留输入即过滤——
   // 站点分类含各等级共 80+ 项，纯 select 翻找太累。搜索词是临时的，失焦未选择则
   // 恢复原值，只有显式点选或点 × 清除才改变选中结果。
@@ -536,6 +576,7 @@
     const clearBtn = root.querySelector('.lkcb-cat-clear');
     const caret = root.querySelector('.lkcb-cat-caret');
     const list = root.querySelector('.lkcb-cat-list');
+    const nav = createListNavigator(list);
     // 选中值 { category, allLevels }：category 为分类自身徽章 ID，allLevels 表示
     // 「所有等级」（自身+全部后代），仅对有子分类的父类提供
     let selected =
@@ -574,11 +615,13 @@
     function openList() {
       renderCategoryOptions(list, searching ? input.value : '');
       list.hidden = false;
+      nav.reset(); // 候选人换了，原高亮作废
       reposition();
       activePicker = api;
     }
     function closeList() {
       list.hidden = true;
+      nav.reset();
       if (activePicker === api) activePicker = null;
       searching = false;
       syncInput();
@@ -590,7 +633,7 @@
           : { category: Number(id), allLevels: !!allLevels };
       closeList(); // 复位搜索态并回填输入框
     }
-    // 取要选中的项：item 为点击目标，缺省取第一个真实类别（回车确认）
+    // 取要选中的项：item 为点击目标或键盘高亮行，都没给才退回第一个真实类别
     const pick = (item) => {
       const el =
         item || list.querySelector('.lkcb-cat-item[data-id]:not([data-id=""])');
@@ -610,15 +653,24 @@
         // 只收起下拉，不冒泡给面板级 Esc（避免误关整个面板）
         e.stopPropagation();
         closeList();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault(); // 别让方向键在输入框里挪光标
+        if (!isOpen()) openList();
+        nav.move(e.key === 'ArrowDown' ? 1 : -1);
       } else if (e.key === 'Enter' && isOpen()) {
         e.preventDefault();
-        pick(null);
+        pick(nav.current); // 有高亮就选它，没有则退回第一个真实类别
       }
     });
     input.addEventListener('blur', closeList);
     // 阻止 mousedown 默认行为，避免点选项前输入框先失焦把下拉收起
     for (const el of [list, clearBtn, caret])
       el.addEventListener('mousedown', (e) => e.preventDefault());
+    // 鼠标划过时高亮跟着走，免得键盘高亮与鼠标位置各指一行
+    list.addEventListener('mouseover', (e) => {
+      const item = e.target.closest('.lkcb-cat-item');
+      if (item) nav.highlight(item);
+    });
     list.addEventListener('click', (e) => {
       const item = e.target.closest('.lkcb-cat-item');
       if (!item) return;

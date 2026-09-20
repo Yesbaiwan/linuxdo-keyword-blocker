@@ -507,6 +507,49 @@
       closedBefore && openedByCaret && catList.hidden,
     );
 
+    // ◆ 类别下拉：↑↓ 移动高亮、回车确认高亮那一行
+    const navRows = () =>
+      [...picker().querySelectorAll('.lkcb-cat-item:not([data-retry])')];
+    const litRows = () =>
+      navRows().filter((el) => el.classList.contains('is-active'));
+    const refilter = async () => {
+      catInput.focus();
+      await sleep(100);
+      catInput.value = '开发调优';
+      catInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(120);
+    };
+    await refilter();
+    catInput.dispatchEvent(keyEvent('ArrowDown'));
+    await sleep(60);
+    assert(
+      '类别下拉：↓ 高亮首行，且只高亮一行',
+      litRows().length === 1 && litRows()[0] === navRows()[0],
+      `候选=${navRows().length} 高亮=${litRows().length}`,
+    );
+    const secondRow = navRows()[1];
+    catInput.dispatchEvent(keyEvent('ArrowDown'));
+    catInput.dispatchEvent(keyEvent('Enter'));
+    await sleep(120);
+    assert(
+      '类别下拉：↓↓ 后回车选中高亮那一行',
+      catInput.value === secondRow.textContent &&
+        !picker().querySelector('.lkcb-cat-clear').hidden,
+      `期望=${secondRow.textContent} 实际=${catInput.value}`,
+    );
+    await refilter();
+    catInput.dispatchEvent(keyEvent('ArrowUp'));
+    await sleep(60);
+    assert(
+      '类别下拉：↑ 从无高亮起步取末行（到头绕回）',
+      litRows().length === 1 && litRows()[0] === navRows().at(-1),
+      `候选=${navRows().length} 高亮=${litRows().indexOf(navRows().at(-1))}`,
+    );
+    catInput.dispatchEvent(keyEvent('Escape'));
+    await sleep(80);
+    picker().querySelector('.lkcb-cat-clear').click();
+    await sleep(80);
+
     // ◆ 匹配语义：标题（匹配断言统一用「直接隐藏」模式，先切过去）
     const hideMode = document.getElementById('lkcb-hideMode');
     hideMode.value = 'hide';

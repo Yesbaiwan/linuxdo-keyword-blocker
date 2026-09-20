@@ -38,8 +38,7 @@ Linux.do 帖子屏蔽油猴脚本：用「类别 / 标签 / 标题」规则自�
 
 ## 开发说明
 
-- 环境：Windows 11 + Node.js，测试用 playwright-core 驱动本机 Chrome。
-- 项目根目录需放 `linux.do_cookies.txt`（linux.do 的 cookie），经常需要更换。
+开发与维护说明见 [AGENTS.md](AGENTS.md)。
 
 ## 许可
 
