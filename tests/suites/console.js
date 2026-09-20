@@ -249,10 +249,11 @@
     }
     await sleep(600);
     assert(
-      '登录后启动：面板注入且默认隐藏 + 坏存储回退默认（0 规则、已启用）',
+      '登录后启动：面板注入且默认隐藏 + 坏存储回退默认（0 规则、已启用、淡化模式）',
       !!overlay() &&
         !isOpen() &&
         mockStates().every((s) => !s) &&
+        document.getElementById('lkcb-hideMode').value === 'dim' &&
         document.getElementById('lkcb-status').textContent ===
           '已启用，还没有规则',
       document.getElementById('lkcb-status').textContent,
@@ -508,8 +509,9 @@
     );
 
     // ◆ 类别下拉：↑↓ 移动高亮、回车确认高亮那一行
-    const navRows = () =>
-      [...picker().querySelectorAll('.lkcb-cat-item:not([data-retry])')];
+    const navRows = () => [
+      ...picker().querySelectorAll('.lkcb-cat-item:not([data-retry])'),
+    ];
     const litRows = () =>
       navRows().filter((el) => el.classList.contains('is-active'));
     const refilter = async () => {
@@ -536,6 +538,20 @@
       catInput.value === secondRow.textContent &&
         !picker().querySelector('.lkcb-cat-clear').hidden,
       `期望=${secondRow.textContent} 实际=${catInput.value}`,
+    );
+    await refilter();
+    // 鼠标划过高亮：highlight() 里 items().indexOf(el) 靠对象引用同一性找索引，
+    // 与 querySelectorAll 重查无关（同一 DOM 节点跨多次查询是同一引用）
+    const hoverRow = navRows()[1];
+    hoverRow.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    await sleep(60);
+    const hovered = litRows().length === 1 && litRows()[0] === hoverRow;
+    catInput.dispatchEvent(keyEvent('Enter'));
+    await sleep(120);
+    assert(
+      '类别下拉：鼠标划过第二行高亮并回车选中它',
+      hovered && catInput.value === hoverRow.textContent,
+      `高亮=${hovered} 期望=${hoverRow.textContent} 实际=${catInput.value}`,
     );
     await refilter();
     catInput.dispatchEvent(keyEvent('ArrowUp'));
@@ -871,7 +887,8 @@
     assert(
       '导入（追加）：再导同一文件，与现有规则全重复，一条不增',
       // A 在文件里出现两次，两条都算重复：5 条 = 1 空 + 4 重复
-      chips().length === 4 && statusText().includes('没有新规则，跳过 4 条重复'),
+      chips().length === 4 &&
+        statusText().includes('没有新规则，跳过 4 条重复'),
       JSON.stringify({ count: chips().length, status: statusText() }),
     );
     await importFile('{ 这不是 JSON');
