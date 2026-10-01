@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do Keyword Blocker
 // @namespace    https://linux.do/
-// @version      2.6.1
+// @version      2.6.2
 // @description  用「类别/标签/标题」规则屏蔽 linux.do 上不想看到的帖子（需登录使用）
 // @author       ℬ𝒶𝒾𝒲𝒶𝓃
 // @match        https://linux.do/*
@@ -90,9 +90,9 @@
   function categoryOptions(id) {
     return catChildren.get(id)?.length
       ? [
-          [categoryName(id, true), true],
-          [categoryName(id), false],
-        ]
+        [categoryName(id, true), true],
+        [categoryName(id), false],
+      ]
       : [[categoryName(id), false]];
   }
 
@@ -153,7 +153,7 @@
               ts: Date.now(),
               categories: [...catById.values()],
             }),
-          ).catch(() => {});
+          ).catch(() => { });
         } catch {
           if (attempt < 3)
             await new Promise((r) => setTimeout(r, 800 * attempt));
@@ -299,9 +299,9 @@
           rule.category == null
             ? null
             : (rule.allLevels
-                ? [...collectLevelIds(rule.category)]
-                : [rule.category]
-              ).map(String),
+              ? [...collectLevelIds(rule.category)]
+              : [rule.category]
+            ).map(String),
         tags: rule.tags.map(normalizeText),
         noTag: rule.noTag,
         title: normalizeText(rule.title),
@@ -583,9 +583,9 @@
       initial?.category == null
         ? { category: null, allLevels: false }
         : {
-            category: Number(initial.category),
-            allLevels: !!initial.allLevels,
-          };
+          category: Number(initial.category),
+          allLevels: !!initial.allLevels,
+        };
     let searching = false; // 正在输入搜索词（尚未确认选择）
 
     const isOpen = () => !list.hidden;
@@ -893,7 +893,7 @@
     btn.disabled = settings.rules.length === 0;
     btn.textContent =
       settings.rules.length > 0 &&
-      settings.rules.every((r) => r.enabled !== false)
+        settings.rules.every((r) => r.enabled !== false)
         ? '全部停用'
         : '全部启用';
   }
