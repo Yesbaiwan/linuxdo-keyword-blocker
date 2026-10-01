@@ -32,9 +32,9 @@
   // 至少填一项；allLevels 命中自身+全部等级后代，noTag 匹配零标签帖（与 tags 互斥）
   const DEFAULT_SETTINGS = { enabled: true, rules: [], hideMode: 'dim' };
 
-  // 列表页行与搜索结果行；搜索结果里内层也带 topic-id，统一按最外层行处理
-  const TOPIC_SELECTORS =
-    '.fps-result, .latest-topic-list-item, .topic-list-item, [data-topic-id]';
+  // 只认真正的列表行。不能用 [data-topic-id] 之类的大兜底：话题详情页的 section#topic
+  // 也带 data-topic-id，回复里引用的话题卡片还带着自己的徽章/标签，会把整页帖子流误判成一行藏掉
+  const TOPIC_SELECTORS = '.fps-result, .latest-topic-list-item, .topic-list-item';
   // 标题取第一个非空文本；不能用逗号合并的 querySelector（置顶帖的空文本按钮在文档序上先于标题）
   const TITLE_SELECTORS = ['.title', '.topic-title', "a[href^='/t/']"];
 
@@ -1094,7 +1094,7 @@
 
   // ===== 观察器 =====
 
-  // 从任意节点向上找到最外层行（搜索结果里内层也带 topic-id）
+  // 从任意节点向上找到最外层行（行内嵌套结构不单独判定）
   function outermostRow(el) {
     let host = el.parentElement?.closest(TOPIC_SELECTORS);
     while (host) {

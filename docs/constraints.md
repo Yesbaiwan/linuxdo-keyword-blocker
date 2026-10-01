@@ -27,6 +27,7 @@
 
 ## 观察器与扫描
 
+- **行选择器只认三类列表行（`.fps-result` / `.latest-topic-list-item` / `.topic-list-item`），禁加 `[data-topic-id]` 之类的大兜底** —— 话题详情页的 `section#topic` 也带该属性，兜底会把整页帖子流当成一行判定，回复里引用话题卡的徽章/标签一旦命中规则，整个帖子内容就被藏掉（为什么见 [internals.md](internals.md)）。
 - **观察器只监听 `childList` + `subtree`，禁加 `attributes`** —— 脚本自身写 data 属性会自我触发。
 - **`handleAddedNodes` 先把行收进 Set 去重、批次末尾每行只判定一次** —— 站点分多次插入骨架 / 标题 / 徽章，逐次判定会重复计算。文本节点只提升宿主行、别查后代；不要在容器节点上读 `textContent`（会遍历整棵子树）。
 - **类别树就绪前（`ready === false`）不落任何行状态** —— 否则同一行会先按不完整的分类集合算一遍、树到了又跳一次。

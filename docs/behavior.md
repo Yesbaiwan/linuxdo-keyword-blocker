@@ -53,8 +53,9 @@
 
 ## 过滤范围
 
-- 首页 / 最新 / 未读 / 热门 / 分类列表页（`tr.topic-list-item` 等）与搜索结果页（`.fps-result`）。
-- 搜索结果内层也带 `data-topic-id`，状态只打最外层行，内层清空（Ember 会回收复用行节点，残留状态要清掉）。
+- 首页 / 最新 / 未读 / 热门 / 分类列表页（`tr.topic-list-item`、`.latest-topic-list-item`）与搜索结果页（`.fps-result`）。**行选择器只认这三类**，不用 `[data-topic-id]` 之类的大兜底（为什么见 [internals.md](internals.md)）。
+- **话题详情页不处理**：`section#topic` 也带 `data-topic-id`，但它不是列表行。
+- 搜索结果行内可能有嵌套结构，状态只打最外层行，内层清空（Ember 会回收复用行节点，残留状态要清掉）。
 - **子分类页面行内无类别徽章**，所以类别规则在那类页面天然不命中。
 
 ## 匹配语义

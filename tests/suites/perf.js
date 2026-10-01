@@ -27,8 +27,13 @@
 
   const STORE_KEY = 'linuxdo-keyword-blocker-settings';
   const CATEGORY_KEY = 'linuxdo-keyword-blocker-categories';
-  const SEL =
-    '.fps-result, .latest-topic-list-item, .topic-list-item, [data-topic-id]';
+  // 行选择器从被测源码里取，不另写一份（两处各写一份迟早漂移）
+  const SEL = source.match(/const TOPIC_SELECTORS = '([^']+)';/)?.[1];
+  if (!SEL) {
+    console.error('[lkcb-perf] 从源码提取 TOPIC_SELECTORS 失败，正则跟不上源码了');
+    window.__lkcbPerfRunning = false;
+    return;
+  }
   // 处理模式由 run.js 传进来：两种模式都要量（隐藏会移除行、淡化只调透明度，布局行为不同）
   const mode = window.__LKCB_PERF_MODE__ === 'hide' ? 'hide' : 'dim';
   const tag = mode === 'hide' ? '隐藏' : '淡化';

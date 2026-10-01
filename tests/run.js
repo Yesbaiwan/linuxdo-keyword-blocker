@@ -106,6 +106,9 @@ function loadCookies() {
       .replace(/^#HttpOnly_/, '')
       .split('\t');
     if (!name) continue;
+    // cf_clearance 绑定解盾浏览器的指纹，文件里的在测试 Chrome 里无效；profile 里手动过盾
+    // 存下的那份才有效，导入会把好 cookie 盖掉，一律跳过
+    if (name === 'cf_clearance') continue;
     cookies.push({
       name,
       value,

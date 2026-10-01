@@ -64,7 +64,7 @@
   // mock DOM：仿 linux.do 头部（登录态看 #current-user）、话题列表表格与搜索结果块。
   // 行内带类别徽章（data-category-id）与标签（a.discourse-tag）。
   // 面板（#lkcb-overlay）由脚本挂在 body 上，不属于 mock。
-  // 首页 7 行 + 1 个搜索结果块（.fps-result 内层再套一层 [data-topic-id]，验证嵌套行处理）
+  // 首页 7 行 + 1 个搜索结果块（.fps-result 内层再套一层带 data-topic-id 的结构，验证它不会被当成行）
   function buildMock(loggedIn = true) {
     document.getElementById('blocker-test-mock')?.remove();
     const mock = document.createElement('div');
@@ -595,6 +595,28 @@
       '标题规则大小写不敏感：小写标题命中大写关键词',
       mockStates()[2] === 'hidden',
       JSON.stringify(mockStates()),
+    );
+
+    // ◆ 话题详情页：section#topic 自带 data-topic-id，回复引用卡还带着自己的徽章/标签；
+    // 这些都不能被当成列表行处理（回归：帖子流曾被整页藏掉）
+    const mockRoot = document.getElementById('blocker-test-mock');
+    const topicPage = document.createElement('section');
+    topicPage.id = 'topic';
+    topicPage.className = 'topic-area';
+    topicPage.dataset.topicId = '2964037';
+    // prettier-ignore
+    topicPage.innerHTML = `
+      <article class="topic-post"><div class="cooked">
+        <aside class="quote"><span class="badge-category" data-category-id="11"><span class="badge-category__name">搞七捻三</span></span><a class="topic-title" href="/t/topic/99">被引用话题的标题</a></aside>
+      </div></article>`;
+    mockRoot.appendChild(topicPage);
+    await addRule('11', '', '', { noTag: true });
+    assert(
+      '话题详情页：section#topic 及其后代不落任何行状态（引用卡徽章/标签不算列表行）',
+      !topicPage.hasAttribute('data-lkcb-state') &&
+        !topicPage.querySelector('[data-lkcb-state]'),
+      'topic=' + (topicPage.dataset.lkcbState || '无') +
+        ' 后代=' + topicPage.querySelectorAll('[data-lkcb-state]').length,
     );
 
     // ◆ 匹配语义：类别
